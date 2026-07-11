@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  USB device filter for Dingo E-200 breathalyzer (SIMS / MAX40 protocol)
+  Using generic CDC/ACM class to match any USB-Serial adapter.
+  class 0x02 = Communications Device Class (CDC)
+  class 0x0a = CDC Data Interface
+  Also includes common USB-Serial chip VIDs.
+-->
+<resources>
+    <!-- Generic CDC ACM (most USB-Serial converters including Dingo E-200 dock) -->
+    <usb-device class="0x02" subclass="0x02" protocol="0x01" />
+    <usb-device class="0x0a" />
+
+    <!-- CP210x (Silicon Labs) — very common in medical equipment docks -->
+    <usb-device vendor-id="4292" />
+
+    <!-- CH340/CH341 (common cheap USB-Serial) -->
+    <usb-device vendor-id="6790" />
+
+    <!-- FTDI -->
+    <usb-device vendor-id="1027" />
+
+    <!-- Prolific PL2303 -->
+    <usb-device vendor-id="1659" />
+</resources>

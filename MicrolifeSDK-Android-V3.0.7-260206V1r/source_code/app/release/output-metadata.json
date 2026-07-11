@@ -1,0 +1,37 @@
+{
+  "version": 3,
+  "artifactType": {
+    "type": "APK",
+    "kind": "Directory"
+  },
+  "applicationId": "com.mlc.nordic_sdk",
+  "variantName": "release",
+  "elements": [
+    {
+      "type": "SINGLE",
+      "filters": [],
+      "attributes": [],
+      "versionCode": 1,
+      "versionName": "2.2.0",
+      "outputFile": "MicrolifeSDK-Demo(SDK_v3.0.7)-v2.2.0-95869aa.apk"
+    }
+  ],
+  "elementType": "File",
+  "baselineProfiles": [
+    {
+      "minApi": 28,
+      "maxApi": 30,
+      "baselineProfiles": [
+        "baselineProfiles/1/MicrolifeSDK-Demo(SDK_v3.0.7)-v2.2.0-95869aa.dm"
+      ]
+    },
+    {
+      "minApi": 31,
+      "maxApi": 2147483647,
+      "baselineProfiles": [
+        "baselineProfiles/0/MicrolifeSDK-Demo(SDK_v3.0.7)-v2.2.0-95869aa.dm"
+      ]
+    }
+  ],
+  "minSdkVersionForDexing": 29
+}

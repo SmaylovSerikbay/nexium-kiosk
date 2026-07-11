@@ -1,0 +1,6 @@
+{
+  "name": "Nexium Health",
+  "description": "Nexium Health Medical Kiosk Device (KISK) Terminal screen",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

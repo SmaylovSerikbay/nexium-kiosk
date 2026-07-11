@@ -1,0 +1,137 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
+plugins {
+    alias(libs.plugins.androidApplication)
+    alias(libs.plugins.kotlinAndroid)
+    alias(libs.plugins.compose.complier)
+}
+
+def RedColor = "\u001B[91m"
+def ResetColor = "\u001B[0m"
+
+static def getCheckedOutGitCommitHash() {
+    "git rev-parse --verify --short HEAD".execute().text.trim()
+}
+
+android {
+    namespace "com.mlc.nordic_sdk"
+    compileSdkVersion 36
+
+    defaultConfig {
+        applicationId "com.mlc.nordic_sdk"
+        minSdk 29
+        targetSdk 36
+        versionCode 1
+        versionName "2.2.0"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        vectorDrawables {
+            useSupportLibrary true
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+        }
+
+        debug {
+            println("${RedColor} SDK App git commit code: [${getCheckedOutGitCommitHash()}, " +
+                    "v${defaultConfig.versionName}] ${ResetColor}")
+
+            //multiDexEnabled false
+        }
+    }
+
+    applicationVariants.configureEach {
+        variant ->
+            variant.outputs.each {
+                output->
+                    //output.outputFileName  = "AppName-${variant.name}-v${variant.versionName}.apk"
+                    //project.ext { appName = "" }
+                    //def newName = output.outputFile.name
+                    //newName = newName.replace("app-", "$project.ext.appName-")
+                    //newName = newName.replace("-debug", name)
+                    //newName = newName.replace("-release", name)
+                    output.outputFileName  = "MicrolifeSDK-Demo(SDK_v3.0.7)-v${variant.versionName}-${getCheckedOutGitCommitHash()}.apk"
+            }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+
+    buildFeatures {
+        compose true
+        viewBinding true
+    }
+
+    packagingOptions {
+        resources {
+            excludes += ["/META-INF/{AL2.0,LGPL2.1}", "META-INF/*"]
+        }
+    }
+}
+
+kotlin {
+    compilerOptions {
+        jvmTarget.set(JvmTarget.JVM_21)
+    }
+}
+
+composeCompiler {
+    enableStrongSkippingMode = true
+}
+
+dependencies {
+    implementation libs.core.ktx
+    implementation libs.lifecycle.runtime.ktx
+    implementation libs.activity.compose
+    implementation platform(libs.compose.bom)
+    implementation libs.ui
+    implementation libs.ui.graphics
+    implementation libs.ui.tooling.preview
+    implementation libs.material3
+    implementation libs.storage
+
+    testImplementation libs.jupiter
+    testImplementation libs.jupiter.api
+    testRuntimeOnly(libs.jupiter.engine)
+
+    androidTestImplementation libs.ext.junit
+    androidTestImplementation libs.espresso.core
+    androidTestImplementation platform(libs.compose.bom)
+    androidTestImplementation libs.ui.test.junit4
+    androidTestImplementation libs.jupiter
+    androidTestImplementation libs.jupiter.api
+    debugImplementation libs.ui.tooling
+    debugImplementation libs.ui.test.manifest
+
+    //aar (sdk required)
+    implementation fileTree(dir: "libs", include: ["*.aar", "*.jar"], exclude: [])
+
+    //nordic scan (sdk required)
+    implementation libs.scanner
+
+    //nordic connect (sdk required)
+    implementation libs.ble
+    implementation libs.ble.ktx
+    implementation libs.ble.common
+    implementation libs.ble.livedata
+
+    //open csv (sdk required)
+    implementation (libs.opencsv)
+
+    //livedata
+    implementation libs.runtime.livedata
+
+    //Mockito
+    testImplementation libs.mockito.core
+
+    // Compose Glance UI tools
+    implementation(libs.glance.preview)
+    implementation(libs.glance.appwidget.preview)
+}
+

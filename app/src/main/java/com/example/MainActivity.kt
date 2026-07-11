@@ -4484,7 +4484,19 @@ object OmronBleManager {
             gatt?.discoverServices()
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             isConnected.value = false
-            statusText.value = "Отключено"
+            // Omron отключается ПОСЛЕ отправки всех записей истории
+            // Берём последнюю полученную запись — она самая свежая
+            val result = lastResult.value
+            if (result != null) {
+              android.util.Log.d("OmronBleManager", "Disconnected — последний результат: ${result.first}/${result.second} hr=${result.third}")
+              statusText.value = "✓ ${result.first}/${result.second}, пульс ${result.third}"
+              Handler(Looper.getMainLooper()).post {
+                onValueRead(result.first, result.second, result.third)
+              }
+              lastResult.value = null // сбрасываем для следующего сеанса
+            } else {
+              statusText.value = "Отключено"
+            }
           }
         }
 

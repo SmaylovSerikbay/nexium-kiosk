@@ -4,6 +4,7 @@ import android.os.Bundle
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
@@ -830,7 +831,33 @@ fun KioskAppRoot(
     showConfirmationDialog = false
   }
 
-  CompositionLocalProvider(LocalAppLanguage provides activeLanguage) {
+  // Единая обработка системной/аппаратной кнопки "назад": повторяет то же действие,
+  // что и видимая кнопка "назад" на экране (если она есть), иначе игнорируется —
+  // это киоск, случайный системный back не должен выкидывать из приложения или
+  // сбрасывать текущий шаг медосмотра.
+  BackHandler(enabled = true) {
+    when (currentScreen) {
+      KioskScreen.SETTINGS -> {
+        currentScreen = if (currentEmployeeProfile != null) KioskScreen.DASHBOARD else KioskScreen.AUTHORIZATION
+      }
+      KioskScreen.REGISTRATION -> {
+        currentScreen = KioskScreen.AUTHORIZATION
+      }
+      KioskScreen.CONFIRMATION -> {
+        enteredPin = ""
+        verifiedEmployeeResponse = null
+        currentScreen = KioskScreen.AUTHORIZATION
+      }
+      KioskScreen.AUTHORIZATION -> {
+        enteredPin = ""
+        pinErrorText = ""
+        currentScreen = KioskScreen.LANGUAGE_SELECTION
+      }
+      else -> { /* LANGUAGE_SELECTION, DASHBOARD — намеренно игнорируем (киоск не должен сворачиваться/выходить) */ }
+    }
+  }
+
+  CompositionLocalProvider(LocalAppLanguage provides activeLanguage, LocalDarkTheme provides isDarkTheme) {
     // Smooth background layout frame
     Box(
       modifier = Modifier
@@ -876,7 +903,12 @@ fun KioskAppRoot(
               onKeyClick = { handlePinInput(it) },
               onDeleteClick = { handlePinDelete() },
               onVerifyClick = { handleVerifyEmployee() },
-              onRegisterClick = { currentScreen = KioskScreen.REGISTRATION }
+              onRegisterClick = { currentScreen = KioskScreen.REGISTRATION },
+              onChangeLanguage = {
+                enteredPin = ""
+                pinErrorText = ""
+                currentScreen = KioskScreen.LANGUAGE_SELECTION
+              }
             )
           }
           KioskScreen.REGISTRATION -> {
@@ -950,28 +982,18 @@ fun KioskAppRoot(
                 currentStep = StepState.BLOOD_PRESSURE
               },
               onSimulateBPAndPulse = { sys, dia, bpm ->
-                scope.launch {
-                  // Simulate progressive cuff intake
-                  delay(1200)
-                  bpSystolic = sys
-                  bpDiastolic = dia
-                  heartRateValue = bpm
-                  currentStep = StepState.BREATHALYZER
-                }
+                bpSystolic = sys
+                bpDiastolic = dia
+                heartRateValue = bpm
+                currentStep = StepState.BREATHALYZER
               },
               onSimulateBreathalyzer = { valBreath ->
-                scope.launch {
-                  delay(1000)
-                  breathalyzerValue = valBreath
-                  currentStep = StepState.TEMPERATURE
-                }
+                breathalyzerValue = valBreath
+                currentStep = StepState.TEMPERATURE
               },
               onSimulateTemperature = { valTemp ->
-                scope.launch {
-                  delay(1000)
-                  temperatureValue = valTemp
-                  currentStep = StepState.VERIFICATION
-                }
+                temperatureValue = valTemp
+                currentStep = StepState.VERIFICATION
               },
               onSignAndSubmit = {
                 val profileId = (currentEmployeeProfile ?: defaultEmployeeProfile).id
@@ -1092,7 +1114,8 @@ fun AuthorizationGate(
   onKeyClick: (String) -> Unit,
   onDeleteClick: () -> Unit,
   onVerifyClick: () -> Unit,
-  onRegisterClick: () -> Unit
+  onRegisterClick: () -> Unit,
+  onChangeLanguage: () -> Unit = {}
 ) {
   val lang = LocalAppLanguage.current
   
@@ -1271,6 +1294,19 @@ fun AuthorizationGate(
             )
           }
         }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        Text(
+          text = if (lang == AppLanguage.KAZAKH) "← Тілді ауыстыру" else "← Сменить язык",
+          color = AppleMutedGrey,
+          fontSize = 12.sp,
+          modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable { onChangeLanguage() }
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+            .testTag("btn_change_language")
+        )
       }
     }
 
@@ -1394,6 +1430,55 @@ fun KioskDashboard(
   finalVerdictToken: String
 ) {
   val lang = LocalAppLanguage.current
+  var showCancelConfirm by remember { mutableStateOf(false) }
+
+  if (showCancelConfirm) {
+    androidx.compose.material3.AlertDialog(
+      onDismissRequest = { showCancelConfirm = false },
+      title = {
+        Text(
+          text = if (lang == AppLanguage.KAZAKH) "Тексеруден бас тарту?" else "Отменить осмотр?",
+          color = AppleLightGrey,
+          fontWeight = FontWeight.Bold
+        )
+      },
+      text = {
+        Text(
+          text = if (lang == AppLanguage.KAZAKH)
+            "Барлық енгізілген деректер жойылады. Сіз бастапқы экранға ораласыз."
+          else
+            "Весь прогресс осмотра будет потерян. Вы вернётесь на экран входа.",
+          color = AppleMutedGrey
+        )
+      },
+      confirmButton = {
+        Button(
+          onClick = {
+            showCancelConfirm = false
+            onResetAll()
+          },
+          colors = ButtonDefaults.buttonColors(containerColor = AppleRed)
+        ) {
+          Text(
+            text = if (lang == AppLanguage.KAZAKH) "Иә, бас тарту" else "Да, отменить",
+            color = Color.White,
+            fontWeight = FontWeight.Bold
+          )
+        }
+      },
+      dismissButton = {
+        TextButton(onClick = { showCancelConfirm = false }) {
+          Text(
+            text = if (lang == AppLanguage.KAZAKH) "Артқа" else "Назад",
+            color = AppleMutedGrey
+          )
+        }
+      },
+      containerColor = AppleCharcoal,
+      shape = RoundedCornerShape(20.dp)
+    )
+  }
+
   Row(
     modifier = Modifier
       .fillMaxSize()
@@ -1496,13 +1581,32 @@ fun KioskDashboard(
             letterSpacing = 1.5.sp
           )
         }
-        Text(
-          text = AppText.secureConn.get(lang),
-          color = AppleLightGrey.copy(alpha = 0.4f),
-          fontSize = 10.sp,
-          fontFamily = FontFamily.Monospace,
-          letterSpacing = 1.sp
-        )
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(14.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          if (currentStep != StepState.COMPLETED_VERDICT) {
+            Text(
+              text = if (lang == AppLanguage.KAZAKH) "БАС ТАРТУ" else "ОТМЕНИТЬ ОСМОТР",
+              color = AppleRed,
+              fontSize = 10.sp,
+              fontWeight = FontWeight.Bold,
+              letterSpacing = 1.sp,
+              modifier = Modifier
+                .clip(RoundedCornerShape(8.dp))
+                .clickable { showCancelConfirm = true }
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .testTag("cancel_exam_button")
+            )
+          }
+          Text(
+            text = AppText.secureConn.get(lang),
+            color = AppleLightGrey.copy(alpha = 0.4f),
+            fontSize = 10.sp,
+            fontFamily = FontFamily.Monospace,
+            letterSpacing = 1.sp
+          )
+        }
       }
 
       // Active terminals interactive box (spacious container)
@@ -2117,9 +2221,9 @@ fun Step1HealthComplaints(
           .height(56.dp)
           .testTag("complaints_no_button")
       ) {
-        Icon(Icons.Default.Done, contentDescription = "No", tint = AppleLightGrey, modifier = Modifier.size(18.dp))
+        Icon(Icons.Default.Done, contentDescription = "No", tint = Color.White, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text(AppText.buttonSymptomsNo.get(lang), color = AppleLightGrey, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Text(AppText.buttonSymptomsNo.get(lang), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
       }
     }
   }
@@ -2485,14 +2589,14 @@ fun Step2BloodPressure(
         Icon(
           imageVector = if (tonometerMode == "omron_ble") Icons.Default.BluetoothSearching else Icons.Default.PlayArrow,
           contentDescription = "Simulate",
-          tint = AppleLightGrey,
+          tint = Color.White,
           modifier = Modifier.size(18.dp)
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
           text = if (tonometerMode == "omron_ble") (if (lang == AppLanguage.KAZAKH) "Bluetooth арқылы қысымды өлшеу" else "Считать давление через Bluetooth") else AppText.bpButtonScan.get(lang),
           fontWeight = FontWeight.Bold,
-          color = AppleLightGrey,
+          color = Color.White,
           fontSize = 14.sp
         )
       }
@@ -2838,14 +2942,14 @@ fun Step3Breathalyzer(
           Icon(
             imageVector = Icons.Default.Air,
             contentDescription = null,
-            tint = AppleLightGrey,
+            tint = Color.White,
             modifier = Modifier.size(18.dp)
           )
           Spacer(modifier = Modifier.width(8.dp))
           Text(
             text = AppText.breathButtonScan.get(lang),
             fontWeight = FontWeight.Bold,
-            color = AppleLightGrey,
+            color = Color.White,
             fontSize = 14.sp
           )
         }
@@ -3239,7 +3343,7 @@ fun Step5Verification(
       Icon(
         imageVector = Icons.Default.LockOpen,
         contentDescription = "Signed",
-        tint = AppleLightGrey,
+        tint = Color.White,
         modifier = Modifier.size(18.dp)
       )
       Spacer(modifier = Modifier.width(8.dp))
@@ -3247,7 +3351,7 @@ fun Step5Verification(
         text = AppText.verifButtonSubmit.get(lang),
         fontWeight = FontWeight.Bold,
         fontSize = 14.sp,
-        color = AppleLightGrey
+        color = Color.White
       )
     }
   }
@@ -3479,7 +3583,7 @@ fun FinalClearanceVerdictScreen(
           .width(320.dp)
           .clip(RoundedCornerShape(16.dp))
           .background(AppleBlack)
-          .border(BorderStroke(1.dp, Color.White.copy(alpha = 0.08f)), RoundedCornerShape(16.dp))
+          .border(BorderStroke(1.dp, AppleBorderColor), RoundedCornerShape(16.dp))
           .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
       ) {
@@ -3974,8 +4078,9 @@ fun RegistrationScreen(
   onBack: () -> Unit
 ) {
   val lang = LocalAppLanguage.current
+  val isDark = LocalDarkTheme.current
   val scope = rememberCoroutineScope()
-  
+
   var fullName by remember { mutableStateOf("") }
   var phone by remember { mutableStateOf("") }
   
@@ -4039,8 +4144,13 @@ fun RegistrationScreen(
       horizontalArrangement = Arrangement.SpaceBetween,
       verticalAlignment = Alignment.CenterVertically
     ) {
-      IconButton(onClick = onBack, modifier = Modifier.testTag("reg_back_button")) {
-        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppleLightGrey)
+      IconButton(
+        onClick = onBack,
+        modifier = Modifier
+          .background(if (isDark) AppleCharcoal else Color(0xFFF2F2F7), CircleShape)
+          .testTag("reg_back_button")
+      ) {
+        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppleBlue)
       }
       Text(
         text = Trans("РЕГИСТРАЦИЯ НОВОГО СОТРУДНИКА", "ЖАҢА ҚЫЗМЕНТКЕРДІ ТІРКЕУ").get(lang),
@@ -4053,7 +4163,7 @@ fun RegistrationScreen(
     }
     
     Row(
-      modifier = Modifier.fillMaxWidth(),
+      modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
       horizontalArrangement = Arrangement.spacedBy(24.dp)
     ) {
       // Left basic data entriescard
@@ -4062,7 +4172,7 @@ fun RegistrationScreen(
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, AppleBorderColor),
         colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal.copy(alpha = 0.3f) else AppleCharcoal),
-        modifier = Modifier.weight(1f)
+        modifier = Modifier.weight(1f).fillMaxHeight()
       ) {
         Column(
           modifier = Modifier.padding(20.dp),
@@ -4139,7 +4249,7 @@ fun RegistrationScreen(
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, AppleBorderColor),
         colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal.copy(alpha = 0.3f) else AppleCharcoal),
-        modifier = Modifier.weight(1.2f)
+        modifier = Modifier.weight(1.2f).fillMaxHeight()
       ) {
         Column(
           modifier = Modifier.padding(20.dp),
@@ -4371,7 +4481,7 @@ fun RegistrationScreen(
           Text(
             text = Trans("РЕГИСТРАЦИЯ УСПЕШНА!", "ТІРКЕЛУ СӘТТІ ӨТТІ!").get(lang),
             fontWeight = FontWeight.Bold,
-            color = Color.White,
+            color = AppleLightGrey,
             fontSize = 20.sp
           )
         },
@@ -4386,7 +4496,7 @@ fun RegistrationScreen(
                 "Сервер выпустил ваш персональный ID сотрудника. Используйте его для входа и прохождения медосмотра:",
                 "Сервер сіздің жеке қызметкер ID-іңізді шығарды. Оны кіру және медосмотран өту үшін пайдаланыңыз:"
               ).get(lang),
-              color = Color.White.copy(alpha = 0.7f),
+              color = AppleLightGrey.copy(alpha = 0.7f),
               fontSize = 14.sp,
               textAlign = TextAlign.Center
             )
@@ -4458,6 +4568,19 @@ object OmronBleManager {
   var isConnected = mutableStateOf(false)
   var statusText = mutableStateOf("Ожидание запуска...")
   var lastResult = mutableStateOf<Triple<Int, Int, Int>?>(null)
+  // Omron при подключении выгружает ВСЮ историю сохранённых замеров из памяти
+  // (десятки записей за доли секунды), а не только текущее живое измерение.
+  // Порядок прихода пакетов не гарантирует "последний = самый свежий", поэтому
+  // сравниваем по timestamp (год/месяц/день/час/мин/сек) внутри каждого пакета
+  // и запоминаем запись с максимальным (самым поздним) временем.
+  private var bestTimestampValue: Long = -1L
+  // Реальный Omron M4 шлёт данные почти мгновенно, но сам физически не разрывает
+  // BLE-соединение ещё ~8 секунд после этого (проверено логами). Ждать его
+  // disconnect бессмысленно — как только пакеты перестают приходить, отдаём
+  // результат сами и отключаемся, не дожидаясь прибора.
+  private val settleHandler = Handler(Looper.getMainLooper())
+  private var settleRunnable: Runnable? = null
+  private const val SETTLE_DELAY_MS = 700L
 
   fun connect(context: Context, macAddress: String, onValueRead: (Int, Int, Int) -> Unit) {
     if (macAddress.isEmpty()) {
@@ -4472,10 +4595,14 @@ object OmronBleManager {
     try {
       val device = adapter.getRemoteDevice(macAddress)
       statusText.value = "Подключение к ${device.name ?: "Omron M4"}..."
-      
+      bestTimestampValue = -1L
+      lastResult.value = null
+      settleRunnable?.let { settleHandler.removeCallbacks(it) }
+      settleRunnable = null
+
       activeGatt?.disconnect()
       activeGatt?.close()
-      
+
       activeGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
           if (newState == BluetoothProfile.STATE_CONNECTED) {
@@ -4484,8 +4611,11 @@ object OmronBleManager {
             gatt?.discoverServices()
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             isConnected.value = false
-            // Omron отключается ПОСЛЕ отправки всех записей истории
-            // Берём последнюю полученную запись — она самая свежая
+            settleRunnable?.let { settleHandler.removeCallbacks(it) }
+            settleRunnable = null
+            // Omron физически отключается сам спустя много секунд после отправки
+            // данных — обычно результат уже доставлен settle-таймером раньше.
+            // Это просто подстраховка на случай, если он почему-то не сработал.
             val result = lastResult.value
             if (result != null) {
               android.util.Log.d("OmronBleManager", "Disconnected — последний результат: ${result.first}/${result.second} hr=${result.third}")
@@ -4542,14 +4672,30 @@ object OmronBleManager {
           if (value.size >= 7) {
             val flags = value[0].toInt() and 0xFF
             android.util.Log.d("OmronBleManager", "flags=0x${"%02X".format(flags)}")
-            val sysVal = parseSfloat(value[1], value[2])
-            val diaVal = parseSfloat(value[3], value[4])
+            var sysVal = parseSfloat(value[1], value[2])
+            var diaVal = parseSfloat(value[3], value[4])
+            // bit0: units flag — 0=mmHg, 1=kPa. Конвертируем в mmHg, чтобы не показать данные в другой единице
+            if ((flags and 0x01) != 0) {
+              android.util.Log.d("OmronBleManager", "Units=kPa, конвертируем в mmHg (sys=$sysVal dia=$diaVal)")
+              sysVal *= 7.50062
+              diaVal *= 7.50062
+            }
             // byte[5], byte[6] = Mean Arterial Pressure (MAP) — пропускаем
             var pulseVal = 0.0
             var offset = 7
-            // bit1: timestamp present (7 bytes)
+            var timestampValue = -1L
+            // bit1: timestamp present (7 bytes: year LE u16, month, day, hour, min, sec)
             if ((flags and 0x02) != 0) {
-              android.util.Log.d("OmronBleManager", "Timestamp present, offset=$offset → ${offset+7}")
+              if (value.size >= offset + 7) {
+                val year = ((value[offset + 1].toInt() and 0xFF) shl 8) or (value[offset].toInt() and 0xFF)
+                val month = value[offset + 2].toInt() and 0xFF
+                val day = value[offset + 3].toInt() and 0xFF
+                val hour = value[offset + 4].toInt() and 0xFF
+                val minute = value[offset + 5].toInt() and 0xFF
+                val second = value[offset + 6].toInt() and 0xFF
+                timestampValue = (((((year.toLong() * 13) + month) * 32 + day) * 24 + hour) * 60 + minute) * 60 + second
+                android.util.Log.d("OmronBleManager", "Timestamp=$year-$month-$day $hour:$minute:$second offset=$offset → ${offset+7}")
+              }
               offset += 7
             }
             // bit2: pulse rate present (2 bytes SFLOAT)
@@ -4562,11 +4708,42 @@ object OmronBleManager {
             val sys = sysVal.toInt()
             val dia = diaVal.toInt()
             val hr = if (pulseVal > 0) pulseVal.toInt() else 72
-            android.util.Log.d("OmronBleManager", "RESULT: sys=$sys dia=$dia hr=$hr (sysRaw=$sysVal diaRaw=$diaVal pulseRaw=$pulseVal)")
-            lastResult.value = Triple(sys, dia, hr)
-            statusText.value = "Успешно принято: $sys/$dia, пульс $hr"
-            Handler(Looper.getMainLooper()).post {
-              onValueRead(sys, dia, hr)
+            android.util.Log.d("OmronBleManager", "RESULT: sys=$sys dia=$dia hr=$hr ts=$timestampValue (sysRaw=$sysVal diaRaw=$diaVal pulseRaw=$pulseVal)")
+            // Валидация правдоподобности — отбрасываем битые/reserved SFLOAT-значения
+            if (sys !in 40..280 || dia !in 20..200) {
+              android.util.Log.w("OmronBleManager", "Неправдоподобные значения sys=$sys dia=$dia — пакет проигнорирован")
+              return
+            }
+            // ВАЖНО: только запоминаем результат, НЕ доставляем его в UI здесь —
+            // Omron при подключении выгружает всю историю сохранённых замеров
+            // (десятки пакетов за доли секунды), а не только текущий. Запоминаем
+            // запись с максимальным timestamp — это и есть настоящий свежий замер,
+            // совпадающий с тем, что показано на экране прибора. Если timestamp
+            // недоступен (флаг не выставлен) — используем порядок прихода как fallback.
+            if (timestampValue >= bestTimestampValue) {
+              bestTimestampValue = if (timestampValue >= 0) timestampValue else bestTimestampValue
+              lastResult.value = Triple(sys, dia, hr)
+              statusText.value = "Успешно принято: $sys/$dia, пульс $hr"
+
+              // Ждём SETTLE_DELAY_MS на случай, если следом придёт ещё запись
+              // (история). Если новых пакетов нет — не ждём разрыва связи от
+              // самого прибора (он делает это через много секунд), а доставляем
+              // результат и отключаемся сами.
+              settleRunnable?.let { settleHandler.removeCallbacks(it) }
+              val runnable = Runnable {
+                val settled = lastResult.value
+                if (settled != null) {
+                  android.util.Log.d("OmronBleManager", "Settle timeout — доставляем без ожидания disconnect: ${settled.first}/${settled.second} hr=${settled.third}")
+                  statusText.value = "✓ ${settled.first}/${settled.second}, пульс ${settled.third}"
+                  lastResult.value = null
+                  onValueRead(settled.first, settled.second, settled.third)
+                  try { activeGatt?.disconnect() } catch (_: Exception) {}
+                }
+              }
+              settleRunnable = runnable
+              settleHandler.postDelayed(runnable, SETTLE_DELAY_MS)
+            } else {
+              android.util.Log.d("OmronBleManager", "Пакет старее уже сохранённого (ts=$timestampValue < best=$bestTimestampValue) — пропускаем")
             }
           } else {
             android.util.Log.w("OmronBleManager", "Пакет слишком короткий: ${value.size} байт")
@@ -4579,6 +4756,8 @@ object OmronBleManager {
   }
 
   fun disconnect() {
+    settleRunnable?.let { settleHandler.removeCallbacks(it) }
+    settleRunnable = null
     activeGatt?.disconnect()
     activeGatt?.close()
     activeGatt = null
@@ -4832,7 +5011,7 @@ fun SettingsScreen(
           )
           Text(
             text = "BLE STATUS: ACTIVE",
-            color = if (isDark) AppleLightGrey else AppleBlack,
+            color = AppleLightGrey,
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace
@@ -4876,7 +5055,7 @@ fun SettingsScreen(
             Column {
               Text(
                 text = if (activeLanguage == AppLanguage.KAZAKH) "Тонометр (Қан қысымы)" else "Тонометр (Артериальное давление)",
-                color = if (isDark) AppleLightGrey else AppleBlack,
+                color = AppleLightGrey,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
               )
@@ -4954,7 +5133,7 @@ fun SettingsScreen(
             Column {
               Text(
                 text = if (activeLanguage == AppLanguage.KAZAKH) "Алкотестер" else "Алкотестер",
-                color = if (isDark) AppleLightGrey else AppleBlack,
+                color = AppleLightGrey,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
               )
@@ -5073,7 +5252,7 @@ fun SettingsScreen(
             Column {
               Text(
                 text = if (activeLanguage == AppLanguage.KAZAKH) "Термометр (Дене қызуы)" else "Термометр (Температура тела)",
-                color = if (isDark) AppleLightGrey else AppleBlack,
+                color = AppleLightGrey,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
               )
@@ -5258,7 +5437,7 @@ fun SettingsScreen(
           Column {
             Text(
               text = if (activeLanguage == AppLanguage.KAZAKH) "ЖАҚЫНДАҒЫ ҚҰРЫЛҒЫЛАРДЫ ІЗДЕУ" else "ПОИСК БЛИЖАЙШИХ BLE УСТРОЙСТВ",
-              color = if (isDark) AppleLightGrey else AppleBlack,
+              color = AppleLightGrey,
               fontWeight = FontWeight.Bold,
               fontSize = 14.sp
             )
@@ -5346,7 +5525,7 @@ fun SettingsScreen(
                   Column {
                     Text(
                       text = dev.name,
-                      color = if (isDark) AppleLightGrey else AppleBlack,
+                      color = AppleLightGrey,
                       fontWeight = FontWeight.SemiBold,
                       fontSize = 13.sp
                     )

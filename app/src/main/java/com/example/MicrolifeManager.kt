@@ -358,7 +358,11 @@ object MicrolifeManager {
         val formatted = String.format("%.1f", temp)
         statusText.value  = "Результат: $formatted °C"
         Log.d(TAG, ">>> RESULT: $temp°C")
-        onResultCb?.invoke(temp)
+        // onResponseUploadMeasureData приходит из BLE-потока SDK, а не с Main —
+        // без этого post() обновление Compose-state из onResultCb молча не применяется.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            onResultCb?.invoke(temp)
+        }
         scope.launch {
             delay(500)
             try { btManager?.disconnectGatt() } catch (_: Exception) {}

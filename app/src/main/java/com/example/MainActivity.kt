@@ -6312,7 +6312,7 @@ fun SettingsScreen(
           }
         } else {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            foundDevices.forEach { dev ->
+            foundDevices.sortedByDescending { it.rssi }.forEach { dev ->
               Row(
                 modifier = Modifier
                   .fillMaxWidth()

@@ -5538,6 +5538,12 @@ fun SettingsScreen(
             color = AppleMutedGrey,
             fontSize = 13.sp
           )
+          Text(
+            text = "v${BuildConfig.VERSION_NAME} (build ${BuildConfig.VERSION_CODE})",
+            color = AppleMutedGrey,
+            fontSize = 11.sp,
+            fontFamily = FontFamily.Monospace
+          )
         }
       }
 

@@ -5428,65 +5428,46 @@ fun SettingsScreen(
     }
 
     isScanning = true
+
+    fun upsertScanResult(result: ScanResult) {
+      val dev = result.device ?: return
+      val scanRecordName = result.scanRecord?.deviceName
+      val devName = try {
+        if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
+          dev.name
+        } else null
+      } catch (e: Exception) {
+        null
+      }
+      val resolvedName = when {
+        !scanRecordName.isNullOrBlank() -> scanRecordName
+        !devName.isNullOrBlank() -> devName
+        else -> null
+      }
+      val deviceRssi = result.rssi
+      val existing = foundDevices.find { it.address == dev.address }
+
+      if (existing == null) {
+        val finalName = resolvedName ?: "Bluetooth Device"
+        val type = when {
+          finalName.uppercase().contains("OMRON") || finalName.uppercase().contains("HEM") || dev.address.startsWith("00:80:25") -> "tonometer"
+          finalName.uppercase().contains("ALCO") || finalName.uppercase().contains("BREATH") || finalName.uppercase().contains("ALCOLOCK") -> "breathalyzer"
+          else -> "thermometer"
+        }
+        foundDevices = foundDevices + MockBluetoothDevice(finalName, dev.address, type, deviceRssi)
+      } else if (!resolvedName.isNullOrBlank() && existing.name == "Bluetooth Device") {
+        // Имя пришло позже (например, во втором пакете рекламы) — обновляем плейсхолдер.
+        foundDevices = foundDevices.map { if (it.address == dev.address) it.copy(name = resolvedName, rssi = deviceRssi) else it }
+      }
+    }
+
     val scanCallback = object : ScanCallback() {
       override fun onScanResult(callbackType: Int, result: ScanResult?) {
-        result?.device?.let { dev ->
-          val scanRecordName = result.scanRecord?.deviceName
-          val devName = try {
-            if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-              dev.name
-            } else null
-          } catch (e: Exception) {
-            null
-          }
-          val finalName = when {
-            !scanRecordName.isNullOrBlank() -> scanRecordName
-            !devName.isNullOrBlank() -> devName
-            else -> null
-          } ?: "Bluetooth Device"
-          
-          val deviceRssi = result.rssi
-
-          if (!foundDevices.any { it.address == dev.address }) {
-            val type = when {
-              finalName.uppercase().contains("OMRON") || finalName.uppercase().contains("HEM") || dev.address.startsWith("00:80:25") -> "tonometer"
-              finalName.uppercase().contains("ALCO") || finalName.uppercase().contains("BREATH") || finalName.uppercase().contains("ALCOLOCK") -> "breathalyzer"
-              else -> "thermometer"
-            }
-            foundDevices = foundDevices + MockBluetoothDevice(finalName, dev.address, type, deviceRssi)
-          }
-        }
+        result?.let { upsertScanResult(it) }
       }
 
       override fun onBatchScanResults(results: MutableList<ScanResult>?) {
-        results?.forEach { res ->
-          res.device?.let { dev ->
-            val scanRecordName = res.scanRecord?.deviceName
-            val devName = try {
-              if (context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                dev.name
-              } else null
-            } catch (e: Exception) {
-              null
-            }
-            val finalName = when {
-              !scanRecordName.isNullOrBlank() -> scanRecordName
-              !devName.isNullOrBlank() -> devName
-              else -> null
-            } ?: "Bluetooth Device"
-            
-            val deviceRssi = res.rssi
-
-            if (!foundDevices.any { it.address == dev.address }) {
-              val type = when {
-                finalName.uppercase().contains("OMRON") || finalName.uppercase().contains("HEM") || dev.address.startsWith("00:80:25") -> "tonometer"
-                finalName.uppercase().contains("ALCO") || finalName.uppercase().contains("BREATH") || finalName.uppercase().contains("ALCOLOCK") -> "breathalyzer"
-                else -> "thermometer"
-              }
-              foundDevices = foundDevices + MockBluetoothDevice(finalName, dev.address, type, deviceRssi)
-            }
-          }
-        }
+        results?.forEach { upsertScanResult(it) }
       }
 
       override fun onScanFailed(errorCode: Int) {
@@ -5494,10 +5475,14 @@ fun SettingsScreen(
       }
     }
 
+    val scanSettings = ScanSettings.Builder()
+      .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+      .build()
+
     scope.launch {
       try {
-        scanner.startScan(scanCallback)
-        delay(6000)
+        scanner.startScan(null, scanSettings, scanCallback)
+        delay(8000)
         scanner.stopScan(scanCallback)
       } catch (e: Exception) {
         scanErrorText = "Ошибка: ${e.localizedMessage}"

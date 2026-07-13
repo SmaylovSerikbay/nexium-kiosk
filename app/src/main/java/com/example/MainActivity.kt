@@ -333,6 +333,10 @@ class MainActivity : ComponentActivity() {
     )
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+    // Если устройство назначено Device Owner (см. KioskManager.kt), разрешаем этому
+    // приложению работать в Lock Task Mode — сама блокировка включается в onResume.
+    KioskManager.configureLockTask(this)
+
     WindowCompat.setDecorFitsSystemWindows(window, false)
     val controller = WindowCompat.getInsetsController(window, window.decorView)
     controller.hide(WindowInsetsCompat.Type.systemBars())
@@ -353,6 +357,24 @@ class MainActivity : ComponentActivity() {
             prefs.edit().putBoolean("is_dark_theme", newValue).apply()
           }
         )
+      }
+    }
+  }
+
+  // Пин киоска к экрану на устройствах, где приложение — Device Owner. На обычных
+  // (не Device Owner) устройствах вызов безопасно не выполняет ничего дополнительного —
+  // ограничение переключения между приложениями там уже даёт перехват BackHandler.
+  override fun onResume() {
+    super.onResume()
+    val isOwner = KioskManager.isDeviceOwner(this)
+    android.util.Log.d("MainActivity", "onResume: isDeviceOwner=$isOwner")
+    if (isOwner) {
+      try {
+        android.util.Log.d("MainActivity", "Attempting startLockTask()")
+        startLockTask()
+        android.util.Log.d("MainActivity", "startLockTask() called successfully")
+      } catch (e: Exception) {
+        android.util.Log.e("MainActivity", "Failed to startLockTask()", e)
       }
     }
   }
@@ -500,6 +522,43 @@ fun KioskAppRoot(
   
   val context = androidx.compose.ui.platform.LocalContext.current
   val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
+
+  // Auto-update: проверка версии приложения на бэкенде и скачивание/установка APK.
+  // Диалог показывается только на "простаивающих" экранах (выбор языка/авторизация),
+  // чтобы не мешать сотруднику посреди прохождения медосмотра.
+  var availableUpdate by remember { mutableStateOf<AppVersionResponse?>(null) }
+  var updateDownloadProgress by remember { mutableStateOf<Int?>(null) }
+  var updateDownloadedFile by remember { mutableStateOf<java.io.File?>(null) }
+  var updateErrorText by remember { mutableStateOf<String?>(null) }
+
+  val isDeviceOwnerKiosk = remember(context) { KioskManager.isDeviceOwner(context) }
+  var silentlyInstalledVersion by remember { mutableStateOf<Int?>(null) }
+
+  LaunchedEffect(Unit) {
+    while (true) {
+      val release = AppUpdateManager.checkForUpdate()
+      if (release != null) {
+        if (isDeviceOwnerKiosk) {
+          // Device Owner: скачиваем и ставим полностью в фоне, без единого диалога.
+          if (release.versionCode != silentlyInstalledVersion) {
+            try {
+              val file = AppUpdateManager.downloadApk(context, release) { }
+              KioskManager.installSilently(context, file)
+              silentlyInstalledVersion = release.versionCode
+            } catch (e: Exception) {
+              // Попробуем ещё раз при следующей проверке
+            }
+          }
+        } else if (release.versionCode != availableUpdate?.versionCode) {
+          // Обычное устройство: только диалог с подтверждением пользователя.
+          availableUpdate = release
+          updateDownloadedFile = null
+          updateErrorText = null
+        }
+      }
+      delay(60 * 60 * 1000L) // раз в час
+    }
+  }
 
   // Persistent settings for blood pressure monitor, breathalyzer, and thermometer
   var tonometerMode by remember { mutableStateOf(prefs.getString("tonometer_mode", "simulation") ?: "simulation") }
@@ -1134,8 +1193,106 @@ fun KioskAppRoot(
           )
         }
       }
+
+      // Диалог доступного обновления показываем только на "простаивающих" экранах —
+      // выбор языка/авторизация, — чтобы не прерывать сотрудника посреди медосмотра.
+      val isIdleScreenForUpdate = currentScreen == KioskScreen.LANGUAGE_SELECTION || currentScreen == KioskScreen.AUTHORIZATION
+      val pendingUpdate = availableUpdate
+      if (isIdleScreenForUpdate && pendingUpdate != null) {
+        AppUpdateDialog(
+          release = pendingUpdate,
+          downloadProgress = updateDownloadProgress,
+          downloadedFile = updateDownloadedFile,
+          errorText = updateErrorText,
+          onDownload = {
+            scope.launch {
+              updateErrorText = null
+              updateDownloadProgress = 0
+              try {
+                val file = AppUpdateManager.downloadApk(context, pendingUpdate) { progress ->
+                  updateDownloadProgress = progress
+                }
+                updateDownloadProgress = null
+                updateDownloadedFile = file
+              } catch (e: Exception) {
+                updateDownloadProgress = null
+                updateErrorText = e.localizedMessage ?: "Ошибка загрузки обновления"
+              }
+            }
+          },
+          onInstall = {
+            val file = updateDownloadedFile
+            if (file != null) {
+              if (AppUpdateManager.canInstallPackages(context)) {
+                AppUpdateManager.installApk(context, file)
+              } else {
+                context.startActivity(AppUpdateManager.unknownSourcesSettingsIntent(context))
+              }
+            }
+          },
+          onDismiss = {
+            availableUpdate = null
+            updateDownloadedFile = null
+            updateDownloadProgress = null
+            updateErrorText = null
+          }
+        )
+      }
     }
   }
+}
+
+// ==========================================
+// Диалог автообновления приложения (см. AppUpdateManager.kt)
+// ==========================================
+@Composable
+fun AppUpdateDialog(
+  release: AppVersionResponse,
+  downloadProgress: Int?,
+  downloadedFile: java.io.File?,
+  errorText: String?,
+  onDownload: () -> Unit,
+  onInstall: () -> Unit,
+  onDismiss: () -> Unit
+) {
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text(text = "Доступно обновление v${release.versionName}") },
+    text = {
+      Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (!release.releaseNotes.isNullOrBlank()) {
+          Text(text = release.releaseNotes, fontSize = 13.sp)
+        }
+        if (downloadProgress != null) {
+          Spacer(modifier = Modifier.height(4.dp))
+          LinearProgressIndicator(
+            progress = { downloadProgress / 100f },
+            modifier = Modifier.fillMaxWidth()
+          )
+          Text(text = "Загрузка... $downloadProgress%", fontSize = 12.sp, color = AppleMutedGrey)
+        }
+        if (errorText != null) {
+          Text(text = errorText, color = AppleAmber, fontSize = 12.sp)
+        }
+      }
+    },
+    confirmButton = {
+      when {
+        downloadedFile != null -> {
+          TextButton(onClick = onInstall) { Text("Установить") }
+        }
+        downloadProgress != null -> {
+          TextButton(onClick = {}, enabled = false) { Text("Загрузка...") }
+        }
+        else -> {
+          TextButton(onClick = onDownload) { Text("Скачать") }
+        }
+      }
+    },
+    dismissButton = {
+      TextButton(onClick = onDismiss) { Text("Позже") }
+    }
+  )
 }
 
 // ==========================================
@@ -5327,29 +5484,49 @@ fun SettingsScreen(
         }
       }
 
-      Card(
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal.copy(alpha = 0.5f) else Color(0xFFE5E5EA)),
-        border = BorderStroke(1.dp, AppleBorderColor)
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
       ) {
-        Row(
-          modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
+        val isOwner = remember(context) { KioskManager.isDeviceOwner(context) }
+        Card(
+          shape = RoundedCornerShape(12.dp),
+          colors = CardDefaults.cardColors(containerColor = if (isOwner) AppleGreen.copy(alpha = 0.15f) else AppleRed.copy(alpha = 0.15f)),
+          border = BorderStroke(1.dp, if (isOwner) AppleGreen.copy(alpha = 0.4f) else AppleRed.copy(alpha = 0.4f))
         ) {
-          Box(
-            modifier = Modifier
-              .size(8.dp)
-              .clip(CircleShape)
-              .background(AppleGreen)
-          )
           Text(
-            text = "BLE STATUS: ACTIVE",
-            color = AppleLightGrey,
-            fontSize = 11.sp,
+            text = if (isOwner) "DEVICE OWNER: ACTIVE" else "DEVICE OWNER: DISABLED",
+            color = if (isOwner) AppleGreen else AppleRed,
+            fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
-            fontFamily = FontFamily.Monospace
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
           )
+        }
+
+        Card(
+          shape = RoundedCornerShape(12.dp),
+          colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal.copy(alpha = 0.5f) else Color(0xFFE5E5EA)),
+          border = BorderStroke(1.dp, AppleBorderColor)
+        ) {
+          Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+          ) {
+            Box(
+              modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(AppleGreen)
+            )
+            Text(
+              text = "BLE STATUS: ACTIVE",
+              color = AppleLightGrey,
+              fontSize = 11.sp,
+              fontWeight = FontWeight.Bold,
+              fontFamily = FontFamily.Monospace
+            )
+          }
         }
       }
     }

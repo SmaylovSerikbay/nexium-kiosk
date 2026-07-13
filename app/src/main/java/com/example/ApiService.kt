@@ -186,6 +186,14 @@ data class ExamInfo(
 )
 
 @JsonClass(generateAdapter = true)
+data class AppVersionResponse(
+    @Json(name = "version_code") val versionCode: Int,
+    @Json(name = "version_name") val versionName: String,
+    @Json(name = "apk_url") val apkUrl: String,
+    @Json(name = "release_notes") val releaseNotes: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class ExamDetailResponse(
     @Json(name = "exam") val exam: ExamInfo?,
     @Json(name = "nurse_name") val nurseName: String?,
@@ -237,6 +245,14 @@ interface NexApiService {
     suspend fun getPositions(
         @Header("X-Device-Token") deviceToken: String
     ): List<PositionRef>
+
+    // 200 с данными активного релиза, либо 204 если ничего не опубликовано —
+    // поэтому оборачиваем в Response, а не возвращаем AppVersionResponse напрямую
+    // (Moshi не может распарсить пустое тело 204 ответа).
+    @GET("app/latest-version")
+    suspend fun getLatestAppVersion(
+        @Header("X-Device-Token") deviceToken: String
+    ): Response<AppVersionResponse>
 }
 
 object NexApiClient {

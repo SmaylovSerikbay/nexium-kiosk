@@ -10,6 +10,7 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:name="android.hardware.usb.host" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -34,6 +35,8 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
             <!-- Auto-launch and auto-grant USB permission when Dingo E-200 is connected -->
             <intent-filter>
@@ -43,6 +46,38 @@
                 android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
                 android:resource="@xml/usb_device_filter" />
         </activity>
+
+        <!-- Device Owner receiver: включает Lock Task (запрет переключения на другие
+             приложения) и тихую установку APK-обновлений без диалогов подтверждения.
+             Активируется один раз командой adb (см. README/инструкцию по деплою),
+             сам по себе ничего не блокирует, пока устройство не назначено Device Owner. -->
+        <receiver
+            android:name=".KioskDeviceAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_policies" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Принимает результат тихой установки APK через PackageInstaller (см. KioskManager.kt) -->
+        <receiver
+            android:name=".InstallResultReceiver"
+            android:exported="false" />
+
+        <!-- FileProvider для установки скачанного APK-обновления (see AppUpdateManager.kt) -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

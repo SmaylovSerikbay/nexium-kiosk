@@ -5726,7 +5726,7 @@ fun SettingsScreen(
       modifier = Modifier.fillMaxWidth()
     ) {
       Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        var tokenInput by remember { mutableStateOf(deviceToken) }
+        var tokenInput by remember { mutableStateOf("") }
         
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(
@@ -5736,6 +5736,68 @@ fun SettingsScreen(
             fontSize = 16.sp
           )
           
+          if (tokenInfo != null) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(AppleGreen.copy(alpha = 0.1f))
+                .border(BorderStroke(1.dp, AppleGreen.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
+                .padding(14.dp),
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(imageVector = Icons.Default.CloudDone, contentDescription = null, tint = AppleGreen)
+              Column {
+                Text(
+                  text = "${if (activeLanguage == AppLanguage.KAZAKH) "Құрылғы" else "Имя токена"}: ${tokenInfo.name}",
+                  color = AppleLightGrey,
+                  fontWeight = FontWeight.Bold,
+                  fontSize = 14.sp
+                )
+                if (!tokenInfo.deviceName.isNullOrEmpty()) {
+                  Text(
+                    text = "${if (activeLanguage == AppLanguage.KAZAKH) "Аппарат" else "Привязан к аппарату"}: ${tokenInfo.deviceName}",
+                    color = AppleMutedGrey,
+                    fontSize = 12.sp
+                  )
+                }
+              }
+            }
+          } else if (deviceToken.isNotEmpty() && !isFetchingTokenInfo) {
+            Row(
+              modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(AppleRed.copy(alpha = 0.1f))
+                .border(BorderStroke(1.dp, AppleRed.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
+                .padding(14.dp),
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              Icon(imageVector = Icons.Default.CloudOff, contentDescription = null, tint = AppleRed)
+              Text(
+                text = if (activeLanguage == AppLanguage.KAZAKH) "Токен жарамсыз немесе желі қатесі" else "Невалидный токен или ошибка сети",
+                color = AppleRed,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+              )
+            }
+          }
+
+          if (isFetchingTokenInfo) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = AppleBlue)
+          }
+
+          Spacer(modifier = Modifier.height(8.dp))
+
+          Text(
+            text = if (activeLanguage == AppLanguage.KAZAKH) "Жаңа токенді енгізу" else "Ввести новый токен",
+            color = AppleMutedGrey,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+          )
+
           Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -5744,7 +5806,7 @@ fun SettingsScreen(
             OutlinedTextField(
               value = tokenInput,
               onValueChange = { tokenInput = it },
-              label = { Text("Token") },
+              placeholder = { Text(if (deviceToken.isNotEmpty()) "••••••••••••••••" else "nxt_...") },
               modifier = Modifier.weight(1f),
               colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = AppleBlue,
@@ -5756,64 +5818,19 @@ fun SettingsScreen(
             )
             
             Button(
-              onClick = { onSaveToken(tokenInput) },
+              onClick = { 
+                if (tokenInput.isNotBlank()) {
+                  onSaveToken(tokenInput)
+                  tokenInput = "" 
+                }
+              },
+              enabled = tokenInput.isNotBlank(),
               colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
               shape = RoundedCornerShape(10.dp),
               modifier = Modifier.height(54.dp)
             ) {
-              Text(if (activeLanguage == AppLanguage.KAZAKH) "Сақтау" else "СОХРАНИТЬ")
+              Text(if (activeLanguage == AppLanguage.KAZAKH) "Жаңарту" else "ОБНОВИТЬ")
             }
-          }
-        }
-
-        if (isFetchingTokenInfo) {
-          LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = AppleBlue)
-        } else if (tokenInfo != null) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(12.dp))
-              .background(AppleGreen.copy(alpha = 0.1f))
-              .border(BorderStroke(1.dp, AppleGreen.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
-              .padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(imageVector = Icons.Default.CloudDone, contentDescription = null, tint = AppleGreen)
-            Column {
-              Text(
-                text = "${if (activeLanguage == AppLanguage.KAZAKH) "Құрылғы" else "Имя токена"}: ${tokenInfo.name}",
-                color = AppleLightGrey,
-                fontWeight = FontWeight.Bold,
-                fontSize = 14.sp
-              )
-              if (!tokenInfo.deviceName.isNullOrEmpty()) {
-                Text(
-                  text = "${if (activeLanguage == AppLanguage.KAZAKH) "Аппарат" else "Привязан к аппарату"}: ${tokenInfo.deviceName}",
-                  color = AppleMutedGrey,
-                  fontSize = 12.sp
-                )
-              }
-            }
-          }
-        } else if (deviceToken.isNotEmpty()) {
-          Row(
-            modifier = Modifier
-              .fillMaxWidth()
-              .clip(RoundedCornerShape(12.dp))
-              .background(AppleRed.copy(alpha = 0.1f))
-              .border(BorderStroke(1.dp, AppleRed.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
-              .padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(imageVector = Icons.Default.CloudOff, contentDescription = null, tint = AppleRed)
-            Text(
-              text = if (activeLanguage == AppLanguage.KAZAKH) "Токен жарамсыз немесе желі қатесі" else "Невалидный токен или ошибка сети",
-              color = AppleRed,
-              fontWeight = FontWeight.Bold,
-              fontSize = 14.sp
-            )
           }
         }
       }

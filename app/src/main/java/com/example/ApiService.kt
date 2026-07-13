@@ -81,11 +81,12 @@ data class VerifyEmployeeResponse(
         val raw = photoUrl ?: photo ?: avatarUrl ?: avatar ?: imageUrl ?: image ?:
                   photoPath ?: avatarPath ?: imagePath ?: profilePhoto ?: profilePicture ?: picture ?: pic
         if (raw.isNullOrEmpty()) return null
-        
+        if (raw.startsWith("data:")) return raw
+
         var resolved = if (raw.startsWith("http://") || raw.startsWith("https://")) {
             raw
         } else {
-            val baseUrl = "https://nex.altiora.kz/"
+            val baseUrl = "https://nexium-health.com/"
             if (raw.startsWith("/")) {
                 baseUrl + raw.substring(1)
             } else {
@@ -145,6 +146,26 @@ data class PatientRegisterResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class OrganizationRef(
+    @Json(name = "id") val id: Int,
+    @Json(name = "name") val name: String
+)
+
+@JsonClass(generateAdapter = true)
+data class BranchRef(
+    @Json(name = "id") val id: Int,
+    @Json(name = "name") val name: String,
+    @Json(name = "organization_id") val organizationId: Int
+)
+
+@JsonClass(generateAdapter = true)
+data class PositionRef(
+    @Json(name = "id") val id: Int,
+    @Json(name = "name") val name: String,
+    @Json(name = "name_kk") val nameKk: String? = null
+)
+
+@JsonClass(generateAdapter = true)
 data class PayExamRequest(
     @Json(name = "amount") val amount: Double,
     @Json(name = "exam_id") val examId: String,
@@ -201,6 +222,21 @@ interface NexApiService {
         @Header("X-Device-Token") deviceToken: String,
         @Body request: RegisterPatientRequest
     ): Response<PatientRegisterResponse>
+
+    @GET("reference/organizations")
+    suspend fun getOrganizations(
+        @Header("X-Device-Token") deviceToken: String
+    ): List<OrganizationRef>
+
+    @GET("reference/branches")
+    suspend fun getBranches(
+        @Header("X-Device-Token") deviceToken: String
+    ): List<BranchRef>
+
+    @GET("reference/positions")
+    suspend fun getPositions(
+        @Header("X-Device-Token") deviceToken: String
+    ): List<PositionRef>
 }
 
 object NexApiClient {
@@ -219,7 +255,7 @@ object NexApiClient {
         val baseUrl = try {
             BuildConfig.NEX_API_BASE_URL
         } catch (e: Throwable) {
-            "https://nex.altiora.kz/api/"
+            "https://nexium-health.com/api/"
         }
         
         Retrofit.Builder()

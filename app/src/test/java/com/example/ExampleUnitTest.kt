@@ -8,7 +8,7 @@ class ExampleUnitTest {
     @Test
     fun probePaths() {
         val client = OkHttpClient()
-        val url = "https://nex.altiora.kz/swagger/doc.json"
+        val url = "https://nexium-health.com/swagger/doc.json"
         val request = Request.Builder().url(url).build()
         try {
             client.newCall(request).execute().use { response ->

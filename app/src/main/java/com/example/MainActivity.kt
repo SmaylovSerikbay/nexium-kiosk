@@ -14,6 +14,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -41,6 +42,9 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -258,6 +262,42 @@ data class EmployeeProfile(
   val photoUrl: String? = null,
   val position: String? = null
 )
+
+// Локально снятое на камеру фото хранится/передаётся как data:image/jpeg;base64,...
+// строка (тот же формат, что уходит на сервер) — Coil такие URI не грузит, поэтому
+// декодируем сами и рисуем как Bitmap, а не через AsyncImage.
+fun decodeDataUriBitmap(uri: String?): android.graphics.Bitmap? {
+  if (uri.isNullOrEmpty() || !uri.startsWith("data:")) return null
+  return try {
+    val base64 = uri.substringAfter("base64,", "")
+    if (base64.isEmpty()) return null
+    val bytes = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+  } catch (e: Exception) {
+    null
+  }
+}
+
+// Стандартный TakePicturePreview не даёt выбрать камеру — implicit-интенту нужны
+// дополнительные extras, чтобы системная камера открылась на фронтальном объективе
+// (общепринятые, но не гарантированные ключи — не все камеры их слушают).
+class FrontCameraTakePicturePreview : androidx.activity.result.contract.ActivityResultContract<Void?, android.graphics.Bitmap?>() {
+  override fun createIntent(context: Context, input: Void?): android.content.Intent {
+    return android.content.Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE).apply {
+      putExtra("android.intent.extras.CAMERA_FACING", 1)
+      putExtra("android.intent.extras.LENS_FACING_FRONT", 1)
+      putExtra("android.intent.extra.USE_FRONT_CAMERA", true)
+      putExtra("camerafacing", "front")
+      putExtra("previous_mode", "front_camera")
+    }
+  }
+  override fun getSynchronousResult(context: Context, input: Void?) = null
+  override fun parseResult(resultCode: Int, intent: android.content.Intent?): android.graphics.Bitmap? {
+    if (resultCode != android.app.Activity.RESULT_OK) return null
+    @Suppress("DEPRECATION")
+    return intent?.extras?.get("data") as? android.graphics.Bitmap
+  }
+}
 
 fun getInitials(name: String?): String {
   if (name.isNullOrBlank()) return "👤"
@@ -913,12 +953,8 @@ fun KioskAppRoot(
           }
           KioskScreen.REGISTRATION -> {
             RegistrationScreen(
-              employeeId = enteredPin,
               onSuccess = { actualId, name, org, branch, pos, photo ->
                 saveRegisteredEmployee(actualId, name, org, branch, pos, photo)
-                if (enteredPin != actualId) {
-                  saveRegisteredEmployee(enteredPin, name, org, branch, pos, photo)
-                }
                 enteredPin = actualId
                 verifiedEmployeeResponse = VerifyEmployeeResponse(
                   employeeId = actualId,
@@ -1701,7 +1737,15 @@ fun EmployeeProfileCard(profile: EmployeeProfile, modifier: Modifier = Modifier)
           .background(Brush.linearGradient(colors = if (isDark) listOf(Color(0xFF444446), Color(0xFF1C1C1E)) else listOf(Color(0xFFE5E5EA), Color(0xFFFAFAFA)))),
         contentAlignment = Alignment.Center
       ) {
-        if (!photoUrl.isNullOrEmpty() && !isLoadError) {
+        val localBitmap = remember(photoUrl) { decodeDataUriBitmap(photoUrl) }
+        if (localBitmap != null) {
+          Image(
+            bitmap = localBitmap.asImageBitmap(),
+            contentDescription = "Profile Photo",
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(14.dp))
+          )
+        } else if (!photoUrl.isNullOrEmpty() && !isLoadError) {
           coil.compose.AsyncImage(
             model = photoUrl,
             contentDescription = "Profile Photo",
@@ -3396,7 +3440,7 @@ fun SecureDecisionsLoadingScreen(
         Spacer(modifier = Modifier.height(10.dp))
 
         Text(
-          text = "nex.altiora.kz • " + AppText.secureConn.get(lang),
+          text = "nexium-health.com • " + AppText.secureConn.get(lang),
           color = AppleMutedGrey,
           fontSize = 13.sp,
           textAlign = TextAlign.Center
@@ -3804,7 +3848,15 @@ fun ConfirmationScreen(
                 .border(BorderStroke(3.dp, Brush.sweepGradient(colors = listOf(AppleBlue, Color(0xFF5AC8FA), AppleBlue))), CircleShape),
               contentAlignment = Alignment.Center
             ) {
-              if (!photoUrl.isNullOrEmpty() && !isLoadError) {
+              val localBitmap = remember(photoUrl) { decodeDataUriBitmap(photoUrl) }
+              if (localBitmap != null) {
+                Image(
+                  bitmap = localBitmap.asImageBitmap(),
+                  contentDescription = "Profile Image",
+                  contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                  modifier = Modifier.fillMaxSize().clip(CircleShape)
+                )
+              } else if (!photoUrl.isNullOrEmpty() && !isLoadError) {
                 coil.compose.AsyncImage(
                   model = photoUrl,
                   contentDescription = "Profile Image",
@@ -4068,12 +4120,115 @@ fun getDeterministicPos(name: String?, lang: AppLanguage): String {
 }
 
 // ==========================================
+// Searchable dropdown — переиспользуется для организации/филиала/должности
+// ==========================================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun <T> SearchableDropdownField(
+  label: String,
+  items: List<T>,
+  selectedItem: T?,
+  itemLabel: (T) -> String,
+  onSelect: (T) -> Unit,
+  modifier: Modifier = Modifier,
+  enabled: Boolean = true,
+  placeholder: String? = null
+) {
+  // Два режима: обычный select (клик открывает список, клавиатура не лезет) —
+  // и поиск (включается только явным тапом по лупе, тогда появляется ввод и клавиатура).
+  var expanded by remember { mutableStateOf(false) }
+  var searchMode by remember { mutableStateOf(false) }
+  var query by remember { mutableStateOf(selectedItem?.let(itemLabel) ?: "") }
+  val focusRequester = remember { FocusRequester() }
+
+  LaunchedEffect(selectedItem) {
+    if (!searchMode) query = selectedItem?.let(itemLabel) ?: ""
+  }
+
+  fun closeAndReset() {
+    expanded = false
+    searchMode = false
+    query = selectedItem?.let(itemLabel) ?: ""
+  }
+
+  val filtered = remember(query, items, searchMode) {
+    if (!searchMode || query.isBlank()) items else items.filter { itemLabel(it).contains(query, ignoreCase = true) }
+  }
+
+  ExposedDropdownMenuBox(
+    expanded = expanded && enabled,
+    onExpandedChange = { if (enabled) { if (it) expanded = true else closeAndReset() } },
+    modifier = modifier
+  ) {
+    OutlinedTextField(
+      value = query,
+      onValueChange = { query = it },
+      enabled = enabled,
+      readOnly = !searchMode,
+      label = { Text(label) },
+      placeholder = placeholder?.let { { Text(it) } },
+      trailingIcon = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          if (enabled) {
+            IconButton(onClick = {
+              searchMode = true
+              expanded = true
+              query = ""
+            }) {
+              Icon(Icons.Default.Search, contentDescription = "Search", tint = AppleMutedGrey, modifier = Modifier.size(20.dp))
+            }
+          }
+          ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded && enabled)
+        }
+      },
+      colors = OutlinedTextFieldDefaults.colors(
+        focusedBorderColor = AppleBlue,
+        unfocusedBorderColor = AppleBorderColor,
+        focusedLabelColor = AppleBlue,
+        unfocusedLabelColor = AppleMutedGrey,
+        focusedTextColor = AppleLightGrey,
+        unfocusedTextColor = AppleLightGrey,
+        disabledTextColor = AppleMutedGrey,
+        disabledBorderColor = AppleBorderColor,
+        disabledLabelColor = AppleMutedGrey,
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent,
+        disabledContainerColor = Color.Transparent
+      ),
+      modifier = Modifier
+        .menuAnchor(MenuAnchorType.PrimaryEditable, enabled)
+        .fillMaxWidth()
+        .focusRequester(focusRequester)
+    )
+    ExposedDropdownMenu(expanded = expanded && enabled, onDismissRequest = { closeAndReset() }) {
+      if (filtered.isEmpty()) {
+        DropdownMenuItem(text = { Text("—", color = AppleMutedGrey) }, onClick = {}, enabled = false)
+      }
+      filtered.forEach { item ->
+        DropdownMenuItem(
+          text = { Text(itemLabel(item), color = AppleLightGrey) },
+          onClick = {
+            onSelect(item)
+            searchMode = false
+            query = itemLabel(item)
+            expanded = false
+          }
+        )
+      }
+    }
+  }
+
+  LaunchedEffect(searchMode) {
+    if (searchMode) focusRequester.requestFocus()
+  }
+}
+
+// ==========================================
 // IN-KIOSK CLIENT-SIDE SELF-REGISTRATION ENGINE
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun RegistrationScreen(
-  employeeId: String,
   onSuccess: (registeredId: String, fullName: String, org: String, branch: String, pos: String, photoUrl: String) -> Unit,
   onBack: () -> Unit
 ) {
@@ -4084,49 +4239,77 @@ fun RegistrationScreen(
   var fullName by remember { mutableStateOf("") }
   var phone by remember { mutableStateOf("") }
   
-  val orgs = remember {
-    listOf(
-      Trans("Altiora Транспорт Сервис", "Altiora Көлік Сервисі"),
-      Trans("Altiora Логистика", "Altiora Логистика"),
-      Trans("Altiora Инжиниринг", "Altiora Инжиниринг")
-    )
+  // Справочники организаций/филиалов/должностей — тянутся с реального сервера
+  // (GET /api/reference/{organizations,branches,positions}, X-Device-Token).
+  var orgs by remember { mutableStateOf<List<OrganizationRef>>(emptyList()) }
+  var allBranches by remember { mutableStateOf<List<BranchRef>>(emptyList()) }
+  var positions by remember { mutableStateOf<List<PositionRef>>(emptyList()) }
+  var isLoadingReference by remember { mutableStateOf(true) }
+  var referenceError by remember { mutableStateOf("") }
+
+  var selectedOrg by remember { mutableStateOf<OrganizationRef?>(null) }
+  var selectedBranch by remember { mutableStateOf<BranchRef?>(null) }
+  var selectedPos by remember { mutableStateOf<PositionRef?>(null) }
+
+  // Филиалы зависят от выбранной организации
+  val branches = remember(allBranches, selectedOrg) {
+    val orgId = selectedOrg?.id
+    if (orgId == null) allBranches else allBranches.filter { it.organizationId == orgId }
   }
-  var selectedOrgIdx by remember { mutableStateOf(0) }
-  
-  val branches = remember {
-    listOf(
-      Trans("Алматинский Локомотивный филиал", "Алматы Локомотив филиалы"),
-      Trans("Астанинский Терминал", "Астана Бас Терминалы"),
-      Trans("Карагандинский транспортный хаб", "Қарағанды Кен филиалы")
-    )
+  LaunchedEffect(selectedOrg) { selectedBranch = null }
+
+  LaunchedEffect(Unit) {
+    try {
+      val (o, b, p) = withContext(Dispatchers.IO) {
+        Triple(
+          NexApiClient.service.getOrganizations(NexApiClient.deviceToken),
+          NexApiClient.service.getBranches(NexApiClient.deviceToken),
+          NexApiClient.service.getPositions(NexApiClient.deviceToken)
+        )
+      }
+      orgs = o
+      allBranches = b
+      positions = p
+    } catch (e: Exception) {
+      referenceError = if (lang == AppLanguage.KAZAKH)
+        "Анықтамалықтарды жүктеу мүмкін болмады: ${e.message}"
+      else
+        "Не удалось загрузить справочники: ${e.message}"
+    } finally {
+      isLoadingReference = false
+    }
   }
-  var selectedBranchIdx by remember { mutableStateOf(0) }
   
-  val positions = remember {
-    listOf(
-      Trans("Машинист локомотива", "Аға локомотив машинисі"),
-      Trans("Старший диспетчер", "Аға жүргізуші"),
-      Trans("Инспектор по безопасности", "Техникалық инспектор")
-    )
+  // Фото профиля — реальный снимок с камеры, а не картинка-заглушка.
+  // capturedPhoto — то, что вернула камера; photoConfirmed — пользователь явно
+  // подтвердил, что снимок годится (иначе может переснять).
+  val context = androidx.compose.ui.platform.LocalContext.current
+  var capturedPhoto by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+  var photoConfirmed by remember { mutableStateOf(false) }
+
+  val cameraLauncher = rememberLauncherForActivityResult(
+    contract = FrontCameraTakePicturePreview()
+  ) { bitmap ->
+    if (bitmap != null) {
+      capturedPhoto = bitmap
+      photoConfirmed = false
+    }
   }
-  var selectedPosIdx by remember { mutableStateOf(0) }
-  
-  val samplePortraits = remember {
-    listOf(
-      "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=256",
-      "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=256",
-      "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=256",
-      "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256",
-      "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=256",
-      "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=256"
-    )
+  val cameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted -> if (granted) cameraLauncher.launch(null) }
+
+  fun launchCamera() {
+    val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    if (granted) cameraLauncher.launch(null) else cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
   }
-  var selectedPortraitIdx by remember { mutableStateOf(0) }
-  
+
   var isLoading by remember { mutableStateOf(false) }
   var errorMessage by remember { mutableStateOf("") }
-  
+
+  var showConfirmStep by remember { mutableStateOf(false) }
   var showSuccessDialog by remember { mutableStateOf(false) }
+  var showIdSavedConfirmDialog by remember { mutableStateOf(false) }
   var registeredIdResult by remember { mutableStateOf("") }
   
   Column(
@@ -4162,6 +4345,7 @@ fun RegistrationScreen(
       Spacer(modifier = Modifier.width(48.dp))
     }
     
+    if (!showConfirmStep) {
     Row(
       modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min),
       horizontalArrangement = Arrangement.spacedBy(24.dp)
@@ -4186,25 +4370,17 @@ fun RegistrationScreen(
             letterSpacing = 1.sp
           )
           
-          // Ready-only pre-filled ID from pad
-          OutlinedTextField(
-            value = employeeId,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(Trans("ID сотрудника (ПИН)", "Қызметкердің ID (ПИН)").get(lang)) },
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedBorderColor = AppleBlue,
-              unfocusedBorderColor = AppleBorderColor,
-              focusedLabelColor = AppleBlue,
-              unfocusedLabelColor = AppleMutedGrey,
-              focusedTextColor = AppleLightGrey,
-              unfocusedTextColor = AppleLightGrey,
-              focusedContainerColor = Color.Transparent,
-              unfocusedContainerColor = Color.Transparent
-            ),
-            modifier = Modifier.fillMaxWidth().testTag("reg_id_field")
+          // ID сотрудника присваивается сервером автоматически после регистрации —
+          // пользователь его не вводит.
+          Text(
+            text = Trans(
+              "ID сотрудника будет присвоен автоматически после регистрации",
+              "Қызметкер ID-і тіркеуден кейін автоматты түрде беріледі"
+            ).get(lang),
+            color = AppleMutedGrey,
+            fontSize = 12.sp
           )
-          
+
           // Full name field
           OutlinedTextField(
             value = fullName,
@@ -4263,121 +4439,124 @@ fun RegistrationScreen(
             letterSpacing = 1.sp
           )
           
-          // Organization filtering chips
-          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(Trans("Организация", "Ұйым").get(lang), color = AppleMutedGrey, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              orgs.forEachIndexed { idx, item ->
-                val caption = item.get(lang).replace("Altiora ", "")
-                FilterChip(
-                  selected = selectedOrgIdx == idx,
-                  onClick = { selectedOrgIdx = idx },
-                  label = { Text(caption, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                  colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = AppleBlue,
-                    selectedLabelColor = Color.White,
-                    containerColor = Color.Transparent,
-                    labelColor = AppleMutedGrey
-                  ),
-                  border = FilterChipDefaults.filterChipBorder(
-                    selectedBorderColor = AppleBlue,
-                    borderColor = AppleBorderColor,
-                    selectedBorderWidth = 1.dp,
-                    borderWidth = 1.dp,
-                    selected = selectedOrgIdx == idx,
-                    enabled = true
-                  )
-                )
-              }
+          if (isLoadingReference) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+              CircularProgressIndicator(color = AppleBlue, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+              Text(
+                if (lang == AppLanguage.KAZAKH) "Анықтамалықтар жүктелуде…" else "Загрузка справочников…",
+                color = AppleMutedGrey, fontSize = 12.sp
+              )
             }
+          } else if (referenceError.isNotEmpty()) {
+            Text(referenceError, color = AppleAmber, fontSize = 12.sp)
           }
+
+          // Организация — поисковый выпадающий список
+          SearchableDropdownField(
+            label = Trans("Организация", "Ұйым").get(lang),
+            items = orgs,
+            selectedItem = selectedOrg,
+            itemLabel = { it.name },
+            onSelect = { selectedOrg = it },
+            enabled = !isLoadingReference,
+            modifier = Modifier.fillMaxWidth().testTag("reg_org_field")
+          )
+
+          // Филиал — зависит от выбранной организации
+          SearchableDropdownField(
+            label = Trans("Филиал", "Филиал").get(lang),
+            items = branches,
+            selectedItem = selectedBranch,
+            itemLabel = { it.name },
+            onSelect = { selectedBranch = it },
+            enabled = !isLoadingReference && selectedOrg != null && branches.isNotEmpty(),
+            placeholder = when {
+              selectedOrg == null -> if (lang == AppLanguage.KAZAKH) "Алдымен ұйымды таңдаңыз" else "Сначала выберите организацию"
+              branches.isEmpty() -> if (lang == AppLanguage.KAZAKH) "Филиалдар жоқ" else "Филиалов нет"
+              else -> null
+            },
+            modifier = Modifier.fillMaxWidth().testTag("reg_branch_field")
+          )
+
+          // Должность
+          SearchableDropdownField(
+            label = Trans("Должность", "Лауазымы").get(lang),
+            items = positions,
+            selectedItem = selectedPos,
+            itemLabel = { if (lang == AppLanguage.KAZAKH && !it.nameKk.isNullOrBlank()) it.nameKk!! else it.name },
+            onSelect = { selectedPos = it },
+            enabled = !isLoadingReference,
+            modifier = Modifier.fillMaxWidth().testTag("reg_position_field")
+          )
           
-          // Branch filtering chips
-          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(Trans("Филиал", "Филиал").get(lang), color = AppleMutedGrey, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              branches.forEachIndexed { idx, item ->
-                val caption = item.get(lang).split(" ").first()
-                FilterChip(
-                  selected = selectedBranchIdx == idx,
-                  onClick = { selectedBranchIdx = idx },
-                  label = { Text(caption, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                  colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = AppleBlue,
-                    selectedLabelColor = Color.White,
-                    containerColor = Color.Transparent,
-                    labelColor = AppleMutedGrey
-                  ),
-                  border = FilterChipDefaults.filterChipBorder(
-                    selectedBorderColor = AppleBlue,
-                    borderColor = AppleBorderColor,
-                    selectedBorderWidth = 1.dp,
-                    borderWidth = 1.dp,
-                    selected = selectedBranchIdx == idx,
-                    enabled = true
-                  )
-                )
+          // Фото профиля — снимок с камеры устройства
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(Trans("Фото профиля", "Профиль суреті").get(lang), color = AppleMutedGrey, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+
+            val photo = capturedPhoto
+            if (photo == null) {
+              OutlinedButton(
+                onClick = { launchCamera() },
+                border = BorderStroke(1.dp, AppleBorderColor),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AppleBlue),
+                modifier = Modifier.testTag("reg_camera_button")
+              ) {
+                Icon(imageVector = Icons.Default.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(Trans("Сделать фото", "Фото түсіру").get(lang), fontWeight = FontWeight.Bold, fontSize = 13.sp)
               }
-            }
-          }
-          
-          // Position filtering chips
-          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(Trans("Должность", "Лауазымы").get(lang), color = AppleMutedGrey, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-              positions.forEachIndexed { idx, item ->
-                val caption = item.get(lang).split(" ").first()
-                FilterChip(
-                  selected = selectedPosIdx == idx,
-                  onClick = { selectedPosIdx = idx },
-                  label = { Text(caption, fontSize = 11.sp, fontWeight = FontWeight.Bold) },
-                  colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = AppleBlue,
-                    selectedLabelColor = Color.White,
-                    containerColor = Color.Transparent,
-                    labelColor = AppleMutedGrey
-                  ),
-                  border = FilterChipDefaults.filterChipBorder(
-                    selectedBorderColor = AppleBlue,
-                    borderColor = AppleBorderColor,
-                    selectedBorderWidth = 1.dp,
-                    borderWidth = 1.dp,
-                    selected = selectedPosIdx == idx,
-                    enabled = true
-                  )
-                )
-              }
-            }
-          }
-          
-          // Select High Quality Avatar Photo selection grid
-          Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(Trans("Выберите фото профиля", "Профиль суретін таңдаңыз").get(lang), color = AppleMutedGrey, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-            Row(
-              horizontalArrangement = Arrangement.spacedBy(8.dp),
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              samplePortraits.forEachIndexed { idx, url ->
+            } else {
+              Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 Box(
                   modifier = Modifier
-                    .size(42.dp)
+                    .size(72.dp)
                     .clip(CircleShape)
-                    .border(
-                      BorderStroke(
-                        if (selectedPortraitIdx == idx) 2.dp else 1.dp,
-                        if (selectedPortraitIdx == idx) AppleBlue else AppleBorderColor
-                      ),
-                      CircleShape
-                    )
-                    .clickable { selectedPortraitIdx = idx },
+                    .border(BorderStroke(2.dp, if (photoConfirmed) AppleGreen else AppleAmber), CircleShape),
                   contentAlignment = Alignment.Center
                 ) {
-                  coil.compose.AsyncImage(
-                    model = url,
-                    contentDescription = "Portrait sample",
+                  Image(
+                    bitmap = photo.asImageBitmap(),
+                    contentDescription = "Captured portrait",
                     modifier = Modifier.fillMaxSize().clip(CircleShape),
                     contentScale = androidx.compose.ui.layout.ContentScale.Crop
                   )
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                  if (!photoConfirmed) {
+                    Text(
+                      Trans("Фото подходит?", "Фото жарай ма?").get(lang),
+                      color = AppleMutedGrey, fontSize = 12.sp
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                      OutlinedButton(
+                        onClick = { launchCamera() },
+                        border = BorderStroke(1.dp, AppleBorderColor),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AppleLightGrey),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("reg_retake_button")
+                      ) {
+                        Text(Trans("Переснять", "Қайта түсіру").get(lang), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                      }
+                      Button(
+                        onClick = { photoConfirmed = true },
+                        colors = ButtonDefaults.buttonColors(containerColor = AppleGreen),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier.testTag("reg_confirm_photo_button")
+                      ) {
+                        Text(Trans("Использовать", "Қолдану").get(lang), fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                      }
+                    }
+                  } else {
+                    Text(
+                      "✓ " + Trans("Фото подтверждено", "Фото расталды").get(lang),
+                      color = AppleGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                      Trans("Изменить фото", "Фотоны өзгерту").get(lang),
+                      color = AppleBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                      modifier = Modifier.clickable { launchCamera() }
+                    )
+                  }
                 }
               }
             }
@@ -4389,86 +4568,177 @@ fun RegistrationScreen(
     if (errorMessage.isNotEmpty()) {
       Text(text = errorMessage, color = AppleAmber, fontSize = 13.sp, fontWeight = FontWeight.Medium, textAlign = TextAlign.Center)
     }
-    
+
     Box(
       modifier = Modifier.fillMaxWidth().height(60.dp),
       contentAlignment = Alignment.Center
     ) {
-      if (isLoading) {
-        CircularProgressIndicator(color = AppleBlue)
-      } else {
-        Button(
-          onClick = {
-            if (fullName.isBlank()) {
-              errorMessage = if (lang == AppLanguage.KAZAKH) "Толық аты-жөніңізді енгізіңіз" else "Пожалуйста, введите ФИО"
-              return@Button
+      Button(
+        onClick = {
+          if (fullName.isBlank()) {
+            errorMessage = if (lang == AppLanguage.KAZAKH) "Толық аты-жөніңізді енгізіңіз" else "Пожалуйста, введите ФИО"
+            return@Button
+          }
+          if (selectedOrg == null || selectedPos == null) {
+            errorMessage = if (lang == AppLanguage.KAZAKH) "Ұйымды және лауазымды таңдаңыз" else "Выберите организацию и должность"
+            return@Button
+          }
+          if (selectedBranch == null && branches.isNotEmpty()) {
+            errorMessage = if (lang == AppLanguage.KAZAKH) "Филиалды таңдаңыз" else "Выберите филиал"
+            return@Button
+          }
+          if (capturedPhoto == null || !photoConfirmed) {
+            errorMessage = if (lang == AppLanguage.KAZAKH) "Фото түсіріп, растаңыз" else "Сделайте фото и подтвердите его"
+            return@Button
+          }
+          errorMessage = ""
+          showConfirmStep = true
+        },
+        colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.fillMaxWidth(0.5f).fillMaxHeight().testTag("reg_submit_button")
+      ) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(8.dp),
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Icon(imageVector = Icons.Default.HowToReg, contentDescription = null, tint = Color.White)
+          Text(Trans("Продолжить", "Жалғастыру").get(lang), fontWeight = FontWeight.Bold, fontSize = 16.sp)
+        }
+      }
+    }
+    } else {
+      // ─── Шаг подтверждения — показываем итог перед реальной отправкой на сервер ───
+      val org = selectedOrg
+      val branch = selectedBranch
+      val pos = selectedPos
+      val posDisplayName = if (lang == AppLanguage.KAZAKH && !pos?.nameKk.isNullOrBlank()) pos?.nameKk!! else (pos?.name ?: "")
+
+      Card(
+        shape = RoundedCornerShape(20.dp),
+        border = BorderStroke(1.dp, AppleBorderColor),
+        colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal.copy(alpha = 0.3f) else AppleCharcoal),
+        modifier = Modifier.fillMaxWidth(0.7f)
+      ) {
+        Column(
+          modifier = Modifier.padding(24.dp),
+          verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+          Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            capturedPhoto?.let { bmp ->
+              Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "Photo preview",
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                modifier = Modifier.size(48.dp).clip(CircleShape).border(BorderStroke(1.dp, AppleBorderColor), CircleShape)
+              )
             }
-            isLoading = true
-            errorMessage = ""
-            scope.launch {
-              try {
-                // Download selected portrait template image in background and encode to Base64 data URL
-                val selectedPortraitUrl = samplePortraits[selectedPortraitIdx]
-                val base64Photo = withContext(Dispatchers.IO) {
+            Text(
+              text = Trans("ПРОВЕРЬТЕ ДАННЫЕ ПЕРЕД РЕГИСТРАЦИЕЙ", "ТІРКЕУДЕН БҰРЫН ДЕРЕКТЕРДІ ТЕКСЕРІҢІЗ").get(lang),
+              color = AppleBlue, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
+            )
+          }
+
+          @Composable
+          fun ConfirmRow(label: String, value: String) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+              Text(label, color = AppleMutedGrey, fontSize = 13.sp)
+              Text(value, color = AppleLightGrey, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+            }
+          }
+
+          ConfirmRow(Trans("ФИО", "Т.А.Ә.").get(lang), fullName)
+          if (phone.isNotBlank()) ConfirmRow(Trans("Телефон", "Телефон").get(lang), phone)
+          ConfirmRow(Trans("Организация", "Ұйым").get(lang), org?.name ?: "")
+          ConfirmRow(Trans("Филиал", "Филиал").get(lang), branch?.name ?: "")
+          ConfirmRow(Trans("Должность", "Лауазымы").get(lang), posDisplayName)
+
+          if (errorMessage.isNotEmpty()) {
+            Text(text = errorMessage, color = AppleAmber, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+          }
+
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+          ) {
+            OutlinedButton(
+              onClick = { showConfirmStep = false; errorMessage = "" },
+              enabled = !isLoading,
+              modifier = Modifier.weight(1f).height(52.dp),
+              border = BorderStroke(1.dp, AppleBorderColor),
+              colors = ButtonDefaults.outlinedButtonColors(contentColor = AppleLightGrey)
+            ) {
+              Text(Trans("Изменить", "Өзгерту").get(lang), fontWeight = FontWeight.Bold)
+            }
+            Button(
+              onClick = {
+                isLoading = true
+                errorMessage = ""
+                scope.launch {
                   try {
-                    val client = okhttp3.OkHttpClient()
-                    val request = okhttp3.Request.Builder().url(selectedPortraitUrl).build()
-                    client.newCall(request).execute().use { response ->
-                      if (response.isSuccessful) {
-                        val bytes = response.body?.bytes()
-                        if (bytes != null) {
-                          val encoded = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
-                          "data:image/jpeg;base64,$encoded"
-                        } else null
-                      } else null
+                    // Кодируем реальный снимок с камеры в Base64 data URL
+                    val photoBitmap = capturedPhoto
+                    val base64Photo = withContext(Dispatchers.IO) {
+                      try {
+                        if (photoBitmap == null) return@withContext null
+                        val stream = java.io.ByteArrayOutputStream()
+                        photoBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+                        val encoded = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+                        "data:image/jpeg;base64,$encoded"
+                      } catch (e: Exception) {
+                        null
+                      }
+                    }
+
+                    val req = RegisterPatientRequest(
+                      employeeId = "",
+                      fullName = fullName,
+                      avatarPhoto = base64Photo,
+                      phone = phone.ifBlank { null },
+                      preferredLanguage = if (lang == AppLanguage.KAZAKH) "kk" else "ru",
+                      organizationId = org?.id,
+                      branchId = branch?.id,
+                      positionId = pos?.id
+                    )
+                    val response = withContext(Dispatchers.IO) {
+                      NexApiClient.service.registerPatient(
+                        deviceToken = NexApiClient.deviceToken,
+                        request = req
+                      )
+                    }
+                    if (response.isSuccessful) {
+                      val resultBody = response.body()
+                      val actualId = resultBody?.employee?.employeeId ?: ""
+                      registeredIdResult = actualId
+                      showSuccessDialog = true
+                    } else {
+                      val errBody = response.errorBody()?.string() ?: ""
+                      errorMessage = if (errBody.trimStart().startsWith("<")) {
+                        // Сервер вернул HTML (напр. 404-страницу), а не JSON — не показываем сырую разметку
+                        if (lang == AppLanguage.KAZAKH) "Сервер қатесі (${response.code()})" else "Ошибка сервера (${response.code()})"
+                      } else {
+                        "API Error ${response.code()}: $errBody"
+                      }
                     }
                   } catch (e: Exception) {
-                    null
+                    errorMessage = if (lang == AppLanguage.KAZAKH) "Желі қатесі: ${e.message}" else "Network Error: ${e.message}"
+                  } finally {
+                    isLoading = false
                   }
                 }
-
-                val req = RegisterPatientRequest(
-                  employeeId = employeeId,
-                  fullName = fullName,
-                  avatarPhoto = base64Photo,
-                  phone = phone.ifBlank { null },
-                  preferredLanguage = if (lang == AppLanguage.KAZAKH) "kk" else "ru",
-                  organizationId = selectedOrgIdx + 1,
-                  branchId = selectedBranchIdx + 1,
-                  positionId = selectedPosIdx + 1
-                )
-                val response = withContext(Dispatchers.IO) {
-                  NexApiClient.service.registerPatient(
-                    deviceToken = NexApiClient.deviceToken,
-                    request = req
-                  )
-                }
-                if (response.isSuccessful) {
-                  val resultBody = response.body()
-                  val actualId = resultBody?.employee?.employeeId ?: employeeId
-                  registeredIdResult = actualId
-                  showSuccessDialog = true
-                } else {
-                  val errBody = response.errorBody()?.string() ?: ""
-                  errorMessage = "API Error ${response.code()}: $errBody"
-                }
-              } catch (e: Exception) {
-                errorMessage = "Network Error: ${e.message}"
-              } finally {
-                isLoading = false
+              },
+              enabled = !isLoading,
+              colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+              modifier = Modifier.weight(1f).height(52.dp),
+              shape = RoundedCornerShape(14.dp),
+              contentPadding = PaddingValues(0.dp)
+            ) {
+              if (isLoading) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+              } else {
+                Text(Trans("Подтвердить и зарегистрировать", "Растап тіркеу").get(lang), fontWeight = FontWeight.Bold, fontSize = 13.sp, color = Color.White, textAlign = TextAlign.Center)
               }
             }
-          },
-          colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
-          shape = RoundedCornerShape(16.dp),
-          modifier = Modifier.fillMaxWidth(0.5f).fillMaxHeight().testTag("reg_submit_button")
-        ) {
-          Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            Icon(imageVector = Icons.Default.HowToReg, contentDescription = null, tint = Color.White)
-            Text(Trans("Зарегистрировать сотрудника", "Қызметкерді тіркеу").get(lang), fontWeight = FontWeight.Bold, fontSize = 16.sp)
           }
         }
       }
@@ -4493,14 +4763,14 @@ fun RegistrationScreen(
           ) {
             Text(
               text = Trans(
-                "Сервер выпустил ваш персональный ID сотрудника. Используйте его для входа и прохождения медосмотра:",
-                "Сервер сіздің жеке қызметкер ID-іңізді шығарды. Оны кіру және медосмотран өту үшін пайдаланыңыз:"
+                "Сервер присвоил вам персональный ID сотрудника.",
+                "Сервер сізге жеке қызметкер ID-ін берді."
               ).get(lang),
               color = AppleLightGrey.copy(alpha = 0.7f),
               fontSize = 14.sp,
               textAlign = TextAlign.Center
             )
-            
+
             // Glowing ID Badge
             Box(
               modifier = Modifier
@@ -4512,28 +4782,29 @@ fun RegistrationScreen(
             ) {
               Text(
                 text = registeredIdResult,
-                color = Color.White,
+                color = AppleBlue,
                 fontSize = 36.sp,
                 fontWeight = FontWeight.ExtraBold,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
                 letterSpacing = 2.sp
               )
             }
+
+            Text(
+              text = Trans(
+                "⚠ ОБЯЗАТЕЛЬНО ЗАПИШИТЕ ИЛИ ЗАПОМНИТЕ ЭТОТ ID — он понадобится для входа и прохождения следующих медосмотров.",
+                "⚠ БҰЛ ID-ДІ МІНДЕТТІ ТҮРДЕ ЖАЗЫП АЛЫҢЫЗ НЕМЕСЕ ЕСТЕ САҚТАҢЫЗ — ол келесі кіру және медосмотрдан өту үшін қажет болады."
+              ).get(lang),
+              color = AppleAmber,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Bold,
+              textAlign = TextAlign.Center
+            )
           }
         },
         confirmButton = {
           Button(
-            onClick = {
-              showSuccessDialog = false
-              onSuccess(
-                registeredIdResult,
-                fullName,
-                orgs[selectedOrgIdx].get(lang),
-                branches[selectedBranchIdx].get(lang),
-                positions[selectedPosIdx].get(lang),
-                samplePortraits[selectedPortraitIdx]
-              )
-            },
+            onClick = { showIdSavedConfirmDialog = true },
             colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
             shape = RoundedCornerShape(12.dp)
           ) {
@@ -4543,6 +4814,69 @@ fun RegistrationScreen(
               fontSize = 15.sp,
               color = Color.White
             )
+          }
+        },
+        containerColor = AppleCharcoal,
+        shape = RoundedCornerShape(24.dp)
+      )
+    }
+
+    if (showIdSavedConfirmDialog) {
+      androidx.compose.material3.AlertDialog(
+        onDismissRequest = {},
+        title = {
+          Text(
+            text = Trans("Вы уверены?", "Сенімдісіз бе?").get(lang),
+            fontWeight = FontWeight.Bold,
+            color = AppleLightGrey,
+            fontSize = 20.sp
+          )
+        },
+        text = {
+          Text(
+            text = Trans(
+              "Вы уверены, что сохранили свой ID сотрудника? Без него вы не сможете войти для следующего медосмотра.",
+              "Қызметкер ID-іңізді сақтап алғаныңызға сенімдісіз бе? Ол болмаса келесі медосмотрға кіре алмайсыз."
+            ).get(lang),
+            color = AppleLightGrey.copy(alpha = 0.8f),
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+          )
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              showIdSavedConfirmDialog = false
+              showSuccessDialog = false
+              val posName = if (lang == AppLanguage.KAZAKH && !selectedPos?.nameKk.isNullOrBlank()) selectedPos?.nameKk!! else (selectedPos?.name ?: "")
+              val photoDataUri = capturedPhoto?.let { bmp ->
+                val stream = java.io.ByteArrayOutputStream()
+                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+                "data:image/jpeg;base64," + android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+              } ?: ""
+              onSuccess(
+                registeredIdResult,
+                fullName,
+                selectedOrg?.name ?: "",
+                selectedBranch?.name ?: "",
+                posName,
+                photoDataUri
+              )
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Text(Trans("Да, сохранил", "Иә, сақтадым").get(lang), fontWeight = FontWeight.Bold, color = Color.White)
+          }
+        },
+        dismissButton = {
+          OutlinedButton(
+            onClick = { showIdSavedConfirmDialog = false },
+            border = BorderStroke(1.dp, AppleBorderColor),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AppleLightGrey),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Text(Trans("Нет, показать снова", "Жоқ, қайта көрсет").get(lang), fontWeight = FontWeight.Bold)
           }
         },
         containerColor = AppleCharcoal,

@@ -4422,9 +4422,13 @@ fun <T> SearchableDropdownField(
       if (filtered.isEmpty()) {
         DropdownMenuItem(text = { Text("—", color = AppleMutedGrey) }, onClick = {}, enabled = false)
       }
-      filtered.forEach { item ->
+      filtered.forEachIndexed { index, item ->
+        if (index > 0) {
+          HorizontalDivider(color = AppleBorderColor.copy(alpha = 0.4f))
+        }
         DropdownMenuItem(
-          text = { Text(itemLabel(item), color = AppleLightGrey) },
+          text = { Text(itemLabel(item), color = AppleLightGrey, lineHeight = 18.sp) },
+          contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
           onClick = {
             onSelect(item)
             searchMode = false

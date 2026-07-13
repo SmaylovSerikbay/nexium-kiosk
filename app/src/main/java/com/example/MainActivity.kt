@@ -1221,7 +1221,7 @@ fun KioskAppRoot(
                   }
                 }
               },
-              onSaveToken = { newToken ->
+              onSaveToken = { newToken: String ->
                 settingsPrefs.edit().putString("device_token", newToken).apply()
                 NexApiClient.updateDeviceToken(newToken)
                 deviceToken = newToken
@@ -4386,7 +4386,7 @@ fun <T> SearchableDropdownField(
       label = { Text(label) },
       placeholder = placeholder?.let { { Text(it) } },
       trailingIcon = {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(verticalAlignment = Alignment.Top, modifier = Modifier.padding(top = 4.dp)) {
           if (enabled) {
             IconButton(onClick = {
               searchMode = true
@@ -5757,8 +5757,7 @@ fun SettingsScreen(
                 focusedTextColor = AppleLightGrey,
                 unfocusedTextColor = AppleLightGrey
               ),
-              singleLine = true,
-              visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+              singleLine = true
             )
             
             Button(

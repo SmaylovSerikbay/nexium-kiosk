@@ -200,6 +200,15 @@ data class ExamDetailResponse(
     @Json(name = "success") val success: Boolean?
 )
 
+@JsonClass(generateAdapter = true)
+data class TokenInfoResponse(
+    @Json(name = "id") val id: Int,
+    @Json(name = "name") val name: String,
+    @Json(name = "device_name") val deviceName: String? = null,
+    @Json(name = "is_active") val isActive: Boolean,
+    @Json(name = "expires_at") val expiresAt: String? = null
+)
+
 interface NexApiService {
     @POST("exams/verify-employee")
     suspend fun verifyEmployee(
@@ -253,6 +262,11 @@ interface NexApiService {
     suspend fun getLatestAppVersion(
         @Header("X-Device-Token") deviceToken: String
     ): Response<AppVersionResponse>
+
+    @GET("tokens/me")
+    suspend fun getCurrentTokenInfo(
+        @Header("X-Device-Token") deviceToken: String
+    ): Response<TokenInfoResponse>
 }
 
 object NexApiClient {
@@ -282,11 +296,27 @@ object NexApiClient {
             .create(NexApiService::class.java)
     }
 
-    val deviceToken: String by lazy {
-        try {
-            BuildConfig.NEX_DEVICE_TOKEN
-        } catch (e: Throwable) {
-            "nxt_ffef03614a104bacde146715fcc2d518847adfc39f8a32d79aff28b8f2f368e4"
+    var deviceToken: String = "nxt_ffef03614a104bacde146715fcc2d518847adfc39f8a32d79aff28b8f2f368e4"
+        private set
+
+    fun updateDeviceToken(token: String) {
+        deviceToken = token
+    }
+
+    fun init(context: android.content.Context) {
+        val prefs = context.getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE)
+        val savedToken = prefs.getString("device_token", null)
+        if (!savedToken.isNullOrEmpty()) {
+            deviceToken = savedToken
+        } else {
+            try {
+                val buildConfigToken = BuildConfig.NEX_DEVICE_TOKEN
+                if (buildConfigToken.isNotEmpty()) {
+                    deviceToken = buildConfigToken
+                }
+            } catch (e: Throwable) {
+                // Keep default hardcoded token if BuildConfig fails
+            }
         }
     }
 }

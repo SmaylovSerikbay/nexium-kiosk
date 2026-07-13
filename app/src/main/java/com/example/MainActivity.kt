@@ -320,6 +320,7 @@ data class MetricState(
 class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    NexApiClient.init(this)
     requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
     
     // Set modern immersive sticky full-screen mode to hide system bars and bottom buttons
@@ -346,7 +347,9 @@ class MainActivity : ComponentActivity() {
     setContent {
       val context = androidx.compose.ui.platform.LocalContext.current
       val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
+      val settingsPrefs = remember(context) { context.getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE) }
       var isDarkTheme by remember { mutableStateOf(prefs.getBoolean("is_dark_theme", true)) }
+      var kioskModeEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("kiosk_mode_enabled", true)) }
 
       MyApplicationTheme(darkTheme = isDarkTheme) {
         KioskAppRoot(
@@ -355,6 +358,22 @@ class MainActivity : ComponentActivity() {
             val newValue = !isDarkTheme
             isDarkTheme = newValue
             prefs.edit().putBoolean("is_dark_theme", newValue).apply()
+          },
+          kioskModeEnabled = kioskModeEnabled,
+          onKioskModeToggle = { enabled ->
+            kioskModeEnabled = enabled
+            settingsPrefs.edit().putBoolean("kiosk_mode_enabled", enabled).apply()
+            if (!enabled) {
+              try {
+                stopLockTask()
+              } catch (e: Exception) {}
+            } else {
+              if (KioskManager.isDeviceOwner(this)) {
+                try {
+                  startLockTask()
+                } catch (e: Exception) {}
+              }
+            }
           }
         )
       }
@@ -367,8 +386,11 @@ class MainActivity : ComponentActivity() {
   override fun onResume() {
     super.onResume()
     val isOwner = KioskManager.isDeviceOwner(this)
-    android.util.Log.d("MainActivity", "onResume: isDeviceOwner=$isOwner")
-    if (isOwner) {
+    val settingsPrefs = getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE)
+    val kioskEnabled = settingsPrefs.getBoolean("kiosk_mode_enabled", true)
+    
+    android.util.Log.d("MainActivity", "onResume: isDeviceOwner=$isOwner, kioskEnabled=$kioskEnabled")
+    if (isOwner && kioskEnabled) {
       try {
         android.util.Log.d("MainActivity", "Attempting startLockTask()")
         startLockTask()
@@ -508,7 +530,9 @@ fun LanguageSelectionScreen(
 @Composable
 fun KioskAppRoot(
   isDarkTheme: Boolean = true,
-  onThemeToggle: () -> Unit = {}
+  onThemeToggle: () -> Unit = {},
+  kioskModeEnabled: Boolean = true,
+  onKioskModeToggle: (Boolean) -> Unit = {}
 ) {
   var appLanguage by remember { mutableStateOf<AppLanguage?>(null) }
   var currentScreen by remember { mutableStateOf(KioskScreen.LANGUAGE_SELECTION) }
@@ -522,6 +546,33 @@ fun KioskAppRoot(
   
   val context = androidx.compose.ui.platform.LocalContext.current
   val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
+  val settingsPrefs = remember(context) { context.getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE) }
+
+  var deviceToken by remember { mutableStateOf(NexApiClient.deviceToken) }
+  var tokenInfo by remember { mutableStateOf<TokenInfoResponse?>(null) }
+  var isFetchingTokenInfo by remember { mutableStateOf(false) }
+
+  LaunchedEffect(deviceToken) {
+    if (deviceToken.isNotEmpty()) {
+      isFetchingTokenInfo = true
+      try {
+        val response = withContext(Dispatchers.IO) {
+          NexApiClient.service.getCurrentTokenInfo(deviceToken)
+        }
+        if (response.isSuccessful) {
+          tokenInfo = response.body()
+        } else {
+          tokenInfo = null
+        }
+      } catch (e: Exception) {
+        tokenInfo = null
+      } finally {
+        isFetchingTokenInfo = false
+      }
+    } else {
+      tokenInfo = null
+    }
+  }
 
   // Auto-update: проверка версии приложения на бэкенде и скачивание/установка APK.
   // Диалог показывается только на "простаивающих" экранах (выбор языка/авторизация),
@@ -1141,6 +1192,11 @@ fun KioskAppRoot(
               thermometerMode = thermometerMode,
               thermometerMac = thermometerMac,
               thermometerName = thermometerName,
+              deviceToken = deviceToken,
+              tokenInfo = tokenInfo,
+              isFetchingTokenInfo = isFetchingTokenInfo,
+              kioskModeEnabled = kioskModeEnabled,
+              onKioskModeToggle = onKioskModeToggle,
               onSaveDevice = { type, mode, mac, name ->
                 prefs.edit()
                   .putString("${type}_mode", mode)
@@ -1164,6 +1220,11 @@ fun KioskAppRoot(
                     thermometerName = name
                   }
                 }
+              },
+              onSaveToken = { newToken ->
+                settingsPrefs.edit().putString("device_token", newToken).apply()
+                NexApiClient.updateDeviceToken(newToken)
+                deviceToken = newToken
               },
               onBack = {
                 if (currentEmployeeProfile != null) {
@@ -5281,7 +5342,13 @@ fun SettingsScreen(
   thermometerMode: String,
   thermometerMac: String,
   thermometerName: String,
+  deviceToken: String,
+  tokenInfo: TokenInfoResponse?,
+  isFetchingTokenInfo: Boolean,
+  kioskModeEnabled: Boolean,
+  onKioskModeToggle: (Boolean) -> Unit,
   onSaveDevice: (type: String, mode: String, mac: String, name: String) -> Unit,
+  onSaveToken: (String) -> Unit,
   onBack: () -> Unit
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -5292,6 +5359,7 @@ fun SettingsScreen(
   var foundDevices by remember { mutableStateOf<List<MockBluetoothDevice>>(emptyList()) }
   var scanErrorText by remember { mutableStateOf("") }
   var selectedDeviceForBinding by remember { mutableStateOf<MockBluetoothDevice?>(null) }
+  var showKioskPasswordDialog by remember { mutableStateOf(false) }
 
   val permissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -5525,6 +5593,232 @@ fun SettingsScreen(
               fontSize = 11.sp,
               fontWeight = FontWeight.Bold,
               fontFamily = FontFamily.Monospace
+            )
+          }
+        }
+      }
+    }
+
+    Text(
+      text = if (activeLanguage == AppLanguage.KAZAKH) "ЖҮЙЕЛІК ПАРАМЕТРЛЕР" else "СИСТЕМНЫЕ ПАРАМЕТРЫ",
+      color = AppleBlue,
+      fontSize = 12.sp,
+      fontWeight = FontWeight.Bold,
+      letterSpacing = 1.2.sp
+    )
+
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      border = BorderStroke(1.dp, AppleBorderColor),
+      colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal else Color.White),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column {
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Киоск режимі" else "Режим киоска",
+              color = AppleLightGrey,
+              fontWeight = FontWeight.Bold,
+              fontSize = 16.sp
+            )
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Экранды бұғаттау және системдік батырмаларды өшіру" else "Блокировка экрана и системных кнопок навигации",
+              color = AppleMutedGrey,
+              fontSize = 12.sp
+            )
+          }
+          
+          Switch(
+            checked = kioskModeEnabled,
+            onCheckedChange = { 
+              if (!it) {
+                showKioskPasswordDialog = true
+              } else {
+                onKioskModeToggle(true)
+              }
+            },
+            colors = SwitchDefaults.colors(
+              checkedThumbColor = Color.White,
+              checkedTrackColor = AppleBlue,
+              uncheckedThumbColor = AppleMutedGrey,
+              uncheckedTrackColor = AppleCharcoal
+            )
+          )
+        }
+      }
+    }
+
+    if (showKioskPasswordDialog) {
+      var passInput by remember { mutableStateOf("") }
+      var passError by remember { mutableStateOf(false) }
+      
+      androidx.compose.material3.AlertDialog(
+        onDismissRequest = { showKioskPasswordDialog = false },
+        title = { 
+          Text(
+            text = if (activeLanguage == AppLanguage.KAZAKH) "Кіруді растау" else "Подтверждение доступа",
+            color = AppleLightGrey,
+            fontWeight = FontWeight.Bold
+          ) 
+        },
+        text = {
+          Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Киоск режимін өшіру үшін парольді енгізіңіз:" else "Введите пароль для отключения режима киоска:",
+              color = AppleMutedGrey
+            )
+            OutlinedTextField(
+              value = passInput,
+              onValueChange = { passInput = it; passError = false },
+              label = { Text("Password") },
+              isError = passError,
+              visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+              singleLine = true,
+              modifier = Modifier.fillMaxWidth(),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AppleBlue,
+                unfocusedBorderColor = AppleBorderColor,
+                focusedTextColor = AppleLightGrey,
+                unfocusedTextColor = AppleLightGrey
+              )
+            )
+            if (passError) {
+              Text(
+                text = if (activeLanguage == AppLanguage.KAZAKH) "Қате пароль" else "Неверный пароль",
+                color = AppleRed,
+                fontSize = 12.sp
+              )
+            }
+          }
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              if (passInput == "Nex2026") {
+                onKioskModeToggle(false)
+                showKioskPasswordDialog = false
+              } else {
+                passError = true
+              }
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = AppleBlue)
+          ) {
+            Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { showKioskPasswordDialog = false }) {
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Болдырмау" else "Отмена",
+              color = AppleLightGrey
+            )
+          }
+        },
+        containerColor = AppleCharcoal,
+        shape = RoundedCornerShape(24.dp)
+      )
+    }
+
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      border = BorderStroke(1.dp, AppleBorderColor),
+      colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal else Color.White),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        var tokenInput by remember { mutableStateOf(deviceToken) }
+        
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+          Text(
+            text = if (activeLanguage == AppLanguage.KAZAKH) "API құрылғысының токені" else "API Токен устройства (X-Device-Token)",
+            color = AppleLightGrey,
+            fontWeight = FontWeight.Bold,
+            fontSize = 16.sp
+          )
+          
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            OutlinedTextField(
+              value = tokenInput,
+              onValueChange = { tokenInput = it },
+              label = { Text("Token") },
+              modifier = Modifier.weight(1f),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AppleBlue,
+                unfocusedBorderColor = AppleBorderColor,
+                focusedTextColor = AppleLightGrey,
+                unfocusedTextColor = AppleLightGrey
+              ),
+              singleLine = true,
+              visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation()
+            )
+            
+            Button(
+              onClick = { onSaveToken(tokenInput) },
+              colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.height(54.dp)
+            ) {
+              Text(if (activeLanguage == AppLanguage.KAZAKH) "Сақтау" else "СОХРАНИТЬ")
+            }
+          }
+        }
+
+        if (isFetchingTokenInfo) {
+          LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = AppleBlue)
+        } else if (tokenInfo != null) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(AppleGreen.copy(alpha = 0.1f))
+              .border(BorderStroke(1.dp, AppleGreen.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
+              .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(imageVector = Icons.Default.CloudDone, contentDescription = null, tint = AppleGreen)
+            Column {
+              Text(
+                text = "${if (activeLanguage == AppLanguage.KAZAKH) "Құрылғы" else "Имя токена"}: ${tokenInfo.name}",
+                color = AppleLightGrey,
+                fontWeight = FontWeight.Bold,
+                fontSize = 14.sp
+              )
+              if (!tokenInfo.deviceName.isNullOrEmpty()) {
+                Text(
+                  text = "${if (activeLanguage == AppLanguage.KAZAKH) "Аппарат" else "Привязан к аппарату"}: ${tokenInfo.deviceName}",
+                  color = AppleMutedGrey,
+                  fontSize = 12.sp
+                )
+              }
+            }
+          }
+        } else if (deviceToken.isNotEmpty()) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(12.dp))
+              .background(AppleRed.copy(alpha = 0.1f))
+              .border(BorderStroke(1.dp, AppleRed.copy(alpha = 0.3f)), RoundedCornerShape(12.dp))
+              .padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(imageVector = Icons.Default.CloudOff, contentDescription = null, tint = AppleRed)
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Токен жарамсыз немесе желі қатесі" else "Невалидный токен или ошибка сети",
+              color = AppleRed,
+              fontWeight = FontWeight.Bold,
+              fontSize = 14.sp
             )
           }
         }

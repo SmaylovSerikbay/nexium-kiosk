@@ -77,6 +77,26 @@ object KioskManager {
         }
     }
 
+    // Снимает политики, которые мешают обслуживанию устройства вне киоск-режима.
+    // Device Owner при этом остаётся назначенным, чтобы киоск можно было включить обратно
+    // без factory reset и повторного dpm set-device-owner.
+    fun disableKioskPolicies(context: Context) {
+        Log.d(TAG, "disableKioskPolicies called")
+        if (!isDeviceOwner(context)) {
+            Log.w(TAG, "Not a device owner, skipping disableKioskPolicies")
+            return
+        }
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = KioskDeviceAdminReceiver.componentName(context)
+        try {
+            dpm.setLockTaskPackages(admin, emptyArray())
+            dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
+            Log.d(TAG, "Kiosk policies disabled")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error disabling kiosk policies", e)
+        }
+    }
+
     // Тихая установка APK без единого диалога — работает только когда приложение
     // является Device Owner (обычные приложения такого права не имеют по дизайну ОС).
     // Не запускаем второй PackageInstaller session для той же версии, пока первая

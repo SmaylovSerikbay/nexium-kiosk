@@ -334,9 +334,17 @@ class MainActivity : ComponentActivity() {
     )
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-    // Если устройство назначено Device Owner (см. KioskManager.kt), разрешаем этому
-    // приложению работать в Lock Task Mode — сама блокировка включается в onResume.
-    KioskManager.configureLockTask(this)
+    val settingsPrefs = getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE)
+    val initialKioskModeEnabled = settingsPrefs.getBoolean("kiosk_mode_enabled", true)
+
+    // Если устройство назначено Device Owner (см. KioskManager.kt), политики киоска
+    // применяем только когда режим включён. Иначе сервисные системные экраны будут
+    // открываться в фоне, потому что приложение останется persistent HOME.
+    if (initialKioskModeEnabled) {
+      KioskManager.configureLockTask(this)
+    } else {
+      KioskManager.disableKioskPolicies(this)
+    }
 
     WindowCompat.setDecorFitsSystemWindows(window, false)
     val controller = WindowCompat.getInsetsController(window, window.decorView)
@@ -347,9 +355,8 @@ class MainActivity : ComponentActivity() {
     setContent {
       val context = androidx.compose.ui.platform.LocalContext.current
       val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
-      val settingsPrefs = remember(context) { context.getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE) }
       var isDarkTheme by remember { mutableStateOf(prefs.getBoolean("is_dark_theme", true)) }
-      var kioskModeEnabled by remember { mutableStateOf(settingsPrefs.getBoolean("kiosk_mode_enabled", true)) }
+      var kioskModeEnabled by remember { mutableStateOf(initialKioskModeEnabled) }
 
       MyApplicationTheme(darkTheme = isDarkTheme) {
         KioskAppRoot(
@@ -367,8 +374,10 @@ class MainActivity : ComponentActivity() {
               try {
                 stopLockTask()
               } catch (e: Exception) {}
+              KioskManager.disableKioskPolicies(this)
             } else {
               if (KioskManager.isDeviceOwner(this)) {
+                KioskManager.configureLockTask(this)
                 try {
                   startLockTask()
                 } catch (e: Exception) {}
@@ -1282,7 +1291,13 @@ fun KioskAppRoot(
           onInstall = {
             val file = updateDownloadedFile
             if (file != null) {
-              if (AppUpdateManager.canInstallPackages(context)) {
+              if (KioskManager.isDeviceOwner(context)) {
+                KioskManager.installSilently(context, file, pendingUpdate.versionCode)
+                availableUpdate = null
+                updateDownloadedFile = null
+                updateDownloadProgress = null
+                updateErrorText = null
+              } else if (AppUpdateManager.canInstallPackages(context)) {
                 AppUpdateManager.installApk(context, file)
               } else {
                 context.startActivity(AppUpdateManager.unknownSourcesSettingsIntent(context))

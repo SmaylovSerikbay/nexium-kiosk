@@ -21,7 +21,15 @@ class GreetingScreenshotTest {
 
   @Test
   fun greeting_screenshot() {
-    composeTestRule.setContent { MyApplicationTheme { LanguageSelectionScreen(onLanguageSelected = {}) } }
+    composeTestRule.setContent {
+      MyApplicationTheme {
+        LanguageSelectionScreen(
+          isDarkTheme = true,
+          onThemeToggle = {},
+          onLanguageSelected = {},
+        )
+      }
+    }
 
     composeTestRule.onRoot().captureRoboImage(filePath = "src/test/screenshots/greeting.png")
   }

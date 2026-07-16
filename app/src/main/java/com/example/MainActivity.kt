@@ -583,7 +583,6 @@ fun KioskAppRoot(
   var updateErrorText by remember { mutableStateOf<String?>(null) }
 
   val isDeviceOwnerKiosk = remember(context) { KioskManager.isDeviceOwner(context) }
-  var silentlyInstalledVersion by remember { mutableStateOf<Int?>(null) }
 
   LaunchedEffect(Unit) {
     while (true) {
@@ -591,11 +590,10 @@ fun KioskAppRoot(
       if (release != null) {
         if (isDeviceOwnerKiosk) {
           // Device Owner: скачиваем и ставим полностью в фоне, без единого диалога.
-          if (release.versionCode != silentlyInstalledVersion) {
+          if (KioskManager.shouldAttemptSilentInstall(context, release.versionCode)) {
             try {
               val file = AppUpdateManager.downloadApk(context, release) { }
-              KioskManager.installSilently(context, file)
-              silentlyInstalledVersion = release.versionCode
+              KioskManager.installSilently(context, file, release.versionCode)
             } catch (e: Exception) {
               // Попробуем ещё раз при следующей проверке
             }

@@ -3,8 +3,10 @@ package com.example
 import android.app.admin.DevicePolicyManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageInstaller
 import android.os.Build
 import android.util.Log
@@ -29,6 +31,10 @@ import java.io.File
 // ставятся через системный диалог установки (см. AppUpdateManager.kt).
 object KioskManager {
     private const val TAG = "KioskManager"
+    private const val UPDATE_PREFS = "nex_silent_updates"
+    private const val KEY_PENDING_VERSION = "pending_version"
+    private const val KEY_PENDING_SINCE = "pending_since"
+    private const val PENDING_INSTALL_TIMEOUT_MS = 2 * 60 * 60 * 1000L
 
     fun isDeviceOwner(context: Context): Boolean {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
@@ -38,8 +44,10 @@ object KioskManager {
         return isOwner
     }
 
-    // Разрешает этому приложению работать в Lock Task Mode. Саму блокировку
-    // (startLockTask) нужно вызывать из Activity — см. MainActivity.onResume.
+    // Разрешает приложению работать в Lock Task Mode и назначает MainActivity
+    // постоянным HOME-приложением. После загрузки Android запускает HOME сам,
+    // поэтому отдельный BOOT_COMPLETED receiver не нужен.
+    // Саму блокировку (startLockTask) вызывает MainActivity.onResume.
     fun configureLockTask(context: Context) {
         Log.d(TAG, "configureLockTask called")
         if (!isDeviceOwner(context)) {
@@ -51,6 +59,15 @@ object KioskManager {
         try {
             dpm.setLockTaskPackages(admin, arrayOf(context.packageName))
             Log.d(TAG, "setLockTaskPackages successful")
+
+            val homeFilter = IntentFilter(Intent.ACTION_MAIN).apply {
+                addCategory(Intent.CATEGORY_HOME)
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+            val homeActivity = ComponentName(context, MainActivity::class.java)
+            dpm.addPersistentPreferredActivity(admin, homeFilter, homeActivity)
+            Log.d(TAG, "MainActivity configured as persistent HOME activity")
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
                 Log.d(TAG, "setLockTaskFeatures successful")
@@ -62,7 +79,21 @@ object KioskManager {
 
     // Тихая установка APK без единого диалога — работает только когда приложение
     // является Device Owner (обычные приложения такого права не имеют по дизайну ОС).
-    fun installSilently(context: Context, apkFile: File) {
+    // Не запускаем второй PackageInstaller session для той же версии, пока первая
+    // ещё выполняется. Зависшее состояние автоматически протухает, чтобы обновление
+    // можно было повторить без перезапуска приложения.
+    fun shouldAttemptSilentInstall(context: Context, versionCode: Int): Boolean {
+        val prefs = context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+        if (prefs.getInt(KEY_PENDING_VERSION, -1) != versionCode) return true
+
+        val pendingSince = prefs.getLong(KEY_PENDING_SINCE, 0L)
+        val isStillPending = pendingSince > 0L &&
+            System.currentTimeMillis() - pendingSince < PENDING_INSTALL_TIMEOUT_MS
+        if (!isStillPending) clearPendingSilentInstall(context, versionCode)
+        return !isStillPending
+    }
+
+    fun installSilently(context: Context, apkFile: File, versionCode: Int) {
         val packageInstaller = context.packageManager.packageInstaller
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
         params.setAppPackageName(context.packageName)
@@ -75,16 +106,40 @@ object KioskManager {
                 session.fsync(out)
             }
 
-            val intent = Intent(context, InstallResultReceiver::class.java)
+            markSilentInstallPending(context, versionCode)
+
+            val intent = Intent(context, InstallResultReceiver::class.java).apply {
+                putExtra(InstallResultReceiver.EXTRA_VERSION_CODE, versionCode)
+            }
             val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
             val pendingIntent = PendingIntent.getBroadcast(context, sessionId, intent, flags)
             session.commit(pendingIntent.intentSender)
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка тихой установки обновления", e)
+            clearPendingSilentInstall(context, versionCode)
             session.abandon()
         } finally {
             session.close()
         }
+    }
+
+    private fun markSilentInstallPending(context: Context, versionCode: Int) {
+        val saved = context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .putInt(KEY_PENDING_VERSION, versionCode)
+            .putLong(KEY_PENDING_SINCE, System.currentTimeMillis())
+            .commit()
+        check(saved) { "Не удалось сохранить состояние тихого обновления" }
+    }
+
+    fun clearPendingSilentInstall(context: Context, versionCode: Int) {
+        val prefs = context.getSharedPreferences(UPDATE_PREFS, Context.MODE_PRIVATE)
+        val pendingVersion = prefs.getInt(KEY_PENDING_VERSION, -1)
+        if (versionCode > 0 && pendingVersion != versionCode) return
+        prefs.edit()
+            .remove(KEY_PENDING_VERSION)
+            .remove(KEY_PENDING_SINCE)
+            .apply()
     }
 }
 
@@ -94,10 +149,19 @@ class InstallResultReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
+        val versionCode = intent.getIntExtra(EXTRA_VERSION_CODE, -1)
+        KioskManager.clearPendingSilentInstall(context, versionCode)
         if (status == PackageInstaller.STATUS_SUCCESS) {
-            Log.i("InstallResultReceiver", "Обновление установлено успешно")
+            Log.i("InstallResultReceiver", "Обновление до versionCode=$versionCode установлено успешно")
         } else {
-            Log.e("InstallResultReceiver", "Ошибка установки обновления: status=$status message=$message")
+            Log.e(
+                "InstallResultReceiver",
+                "Ошибка установки versionCode=$versionCode: status=$status message=$message"
+            )
         }
+    }
+
+    companion object {
+        const val EXTRA_VERSION_CODE = "com.example.extra.UPDATE_VERSION_CODE"
     }
 }

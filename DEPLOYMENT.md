@@ -74,12 +74,12 @@ adb shell dpm remove-active-admin com.aistudio.nexiumhealth.qptwyx/com.example.K
    относительно предыдущего релиза).
 2. Загрузить его через admin API (JWT-токен администратора):
    ```bash
-   curl -X POST "https://nexium-health.com/api/admin/app-releases?version_code=<N>" \
+   curl -X POST "https://nexium-health.com/api/admin/app-releases" \
      -H "Authorization: Bearer <JWT>" \
      -F "file=@nexium-kiosk-release.apk" \
-     -F "version_name=1.4.2" \
      -F "release_notes=Что изменилось в этой версии"
    ```
+   `version_code` и `version_name` backend читает из APK автоматически.
    Релиз создаётся **неактивным** — киоски его ещё не видят.
 3. Опубликовать релиз (сделать активным для всех киосков):
    ```bash

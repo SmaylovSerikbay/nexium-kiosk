@@ -5,7 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import androidx.core.content.FileProvider
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -17,6 +19,16 @@ import java.util.concurrent.TimeUnit
 // киоск лишь спрашивает /api/app/latest-version и, если version_code новее текущего,
 // предлагает скачать и установить).
 object AppUpdateManager {
+    private const val UPDATE_STATUS_PREFS = "nex_update_status"
+    private const val KEY_STATUS_PENDING = "pending"
+    private const val KEY_STATUS = "status"
+    private const val KEY_TARGET_VERSION_CODE = "target_version_code"
+    private const val KEY_TARGET_VERSION_NAME = "target_version_name"
+    private const val KEY_INSTALLED_VERSION_CODE = "installed_version_code"
+    private const val KEY_INSTALLED_VERSION_NAME = "installed_version_name"
+    private const val KEY_APK_URL = "apk_url"
+    private const val KEY_MESSAGE = "message"
+    private const val KEY_REPORTED_AT = "reported_at"
 
     // Отдельный клиент без логирующего интерцептора большого бинарного тела APK
     private val downloadClient = OkHttpClient.Builder()
@@ -35,7 +47,11 @@ object AppUpdateManager {
     // BuildConfig.VERSION_CODE, иначе null (обновлений нет или сервер вернул 204).
     suspend fun checkForUpdate(): AppVersionResponse? = withContext(Dispatchers.IO) {
         try {
-            val response = NexApiClient.service.getLatestAppVersion(NexApiClient.deviceToken)
+            val response = NexApiClient.service.getLatestAppVersion(
+                NexApiClient.deviceToken,
+                BuildConfig.VERSION_CODE,
+                BuildConfig.VERSION_NAME
+            )
             if (!response.isSuccessful) return@withContext null
             val body = response.body() ?: return@withContext null
             if (body.versionCode <= BuildConfig.VERSION_CODE) return@withContext null
@@ -76,6 +92,80 @@ object AppUpdateManager {
             }
         }
         destFile
+    }
+
+    fun enqueueUpdateStatus(
+        context: Context,
+        status: String,
+        targetVersionCode: Int,
+        targetVersionName: String? = null,
+        apkUrl: String? = null,
+        message: String? = null
+    ) {
+        val appContext = context.applicationContext
+        val prefs = appContext.getSharedPreferences(UPDATE_STATUS_PREFS, Context.MODE_PRIVATE)
+        prefs.edit()
+            .putBoolean(KEY_STATUS_PENDING, true)
+            .putString(KEY_STATUS, status)
+            .putInt(KEY_TARGET_VERSION_CODE, targetVersionCode)
+            .putString(KEY_TARGET_VERSION_NAME, targetVersionName)
+            .putInt(KEY_INSTALLED_VERSION_CODE, BuildConfig.VERSION_CODE)
+            .putString(KEY_INSTALLED_VERSION_NAME, BuildConfig.VERSION_NAME)
+            .putString(KEY_APK_URL, apkUrl)
+            .putString(KEY_MESSAGE, message)
+            .putLong(KEY_REPORTED_AT, System.currentTimeMillis())
+            .apply()
+
+        sendQueuedUpdateStatusAsync(appContext)
+    }
+
+    fun sendQueuedUpdateStatusAsync(context: Context) {
+        val appContext = context.applicationContext
+        CoroutineScope(Dispatchers.IO).launch {
+            sendQueuedUpdateStatus(appContext)
+        }
+    }
+
+    suspend fun sendQueuedUpdateStatus(context: Context): Boolean = withContext(Dispatchers.IO) {
+        val appContext = context.applicationContext
+        NexApiClient.init(appContext)
+
+        val prefs = appContext.getSharedPreferences(UPDATE_STATUS_PREFS, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_STATUS_PENDING, false)) return@withContext true
+
+        val targetVersionCode = prefs.getInt(KEY_TARGET_VERSION_CODE, -1)
+        if (targetVersionCode <= 0) {
+            prefs.edit().clear().apply()
+            return@withContext true
+        }
+
+        val request = AppUpdateStatusRequest(
+            status = prefs.getString(KEY_STATUS, "unknown") ?: "unknown",
+            targetVersionCode = targetVersionCode,
+            targetVersionName = prefs.getString(KEY_TARGET_VERSION_NAME, null),
+            installedVersionCode = prefs.getInt(KEY_INSTALLED_VERSION_CODE, BuildConfig.VERSION_CODE),
+            installedVersionName = prefs.getString(KEY_INSTALLED_VERSION_NAME, BuildConfig.VERSION_NAME)
+                ?: BuildConfig.VERSION_NAME,
+            apkUrl = prefs.getString(KEY_APK_URL, null),
+            message = prefs.getString(KEY_MESSAGE, null),
+            packageName = appContext.packageName,
+            deviceManufacturer = Build.MANUFACTURER ?: "",
+            deviceModel = Build.MODEL ?: "",
+            androidSdk = Build.VERSION.SDK_INT,
+            reportedAt = prefs.getLong(KEY_REPORTED_AT, System.currentTimeMillis())
+        )
+
+        try {
+            val response = NexApiClient.service.reportAppUpdateStatus(NexApiClient.deviceToken, request)
+            if (response.isSuccessful) {
+                prefs.edit().clear().apply()
+                true
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
     }
 
     // true, если система разрешает установку APK из этого приложения (Android 8+).

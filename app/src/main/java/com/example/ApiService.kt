@@ -194,6 +194,22 @@ data class AppVersionResponse(
 )
 
 @JsonClass(generateAdapter = true)
+data class AppUpdateStatusRequest(
+    @Json(name = "status") val status: String,
+    @Json(name = "target_version_code") val targetVersionCode: Int,
+    @Json(name = "target_version_name") val targetVersionName: String? = null,
+    @Json(name = "installed_version_code") val installedVersionCode: Int,
+    @Json(name = "installed_version_name") val installedVersionName: String,
+    @Json(name = "apk_url") val apkUrl: String? = null,
+    @Json(name = "message") val message: String? = null,
+    @Json(name = "package_name") val packageName: String,
+    @Json(name = "device_manufacturer") val deviceManufacturer: String,
+    @Json(name = "device_model") val deviceModel: String,
+    @Json(name = "android_sdk") val androidSdk: Int,
+    @Json(name = "reported_at") val reportedAt: Long
+)
+
+@JsonClass(generateAdapter = true)
 data class ExamDetailResponse(
     @Json(name = "exam") val exam: ExamInfo?,
     @Json(name = "nurse_name") val nurseName: String?,
@@ -260,8 +276,16 @@ interface NexApiService {
     // (Moshi не может распарсить пустое тело 204 ответа).
     @GET("app/latest-version")
     suspend fun getLatestAppVersion(
-        @Header("X-Device-Token") deviceToken: String
+        @Header("X-Device-Token") deviceToken: String,
+        @Header("X-App-Version-Code") versionCode: Int,
+        @Header("X-App-Version-Name") versionName: String
     ): Response<AppVersionResponse>
+
+    @POST("app/update-status")
+    suspend fun reportAppUpdateStatus(
+        @Header("X-Device-Token") deviceToken: String,
+        @Body request: AppUpdateStatusRequest
+    ): Response<ResponseBody>
 
     @GET("tokens/me")
     suspend fun getCurrentTokenInfo(

@@ -7,7 +7,9 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageInstaller
+import android.content.pm.ResolveInfo
 import android.os.Build
 import android.util.Log
 import java.io.File
@@ -35,6 +37,7 @@ object KioskManager {
     private const val KEY_PENDING_VERSION = "pending_version"
     private const val KEY_PENDING_SINCE = "pending_since"
     private const val PENDING_INSTALL_TIMEOUT_MS = 2 * 60 * 60 * 1000L
+    private const val KIOSK_MAX_TIME_TO_LOCK_MS = Long.MAX_VALUE
 
     fun isDeviceOwner(context: Context): Boolean {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
@@ -72,6 +75,9 @@ object KioskManager {
                 dpm.setLockTaskFeatures(admin, DevicePolicyManager.LOCK_TASK_FEATURE_NONE)
                 Log.d(TAG, "setLockTaskFeatures successful")
             }
+
+            dpm.setMaximumTimeToLock(admin, KIOSK_MAX_TIME_TO_LOCK_MS)
+            Log.d(TAG, "Screen timeout disabled for kiosk mode")
         } catch (e: Exception) {
             Log.e(TAG, "Error in configureLockTask", e)
         }
@@ -90,11 +96,46 @@ object KioskManager {
         val admin = KioskDeviceAdminReceiver.componentName(context)
         try {
             dpm.setLockTaskPackages(admin, emptyArray())
+            dpm.setMaximumTimeToLock(admin, 0L)
             dpm.clearPackagePersistentPreferredActivities(admin, context.packageName)
+            restoreSystemHomeActivity(context, dpm, admin)
             Log.d(TAG, "Kiosk policies disabled")
         } catch (e: Exception) {
             Log.e(TAG, "Error disabling kiosk policies", e)
         }
+    }
+
+    private fun restoreSystemHomeActivity(
+        context: Context,
+        dpm: DevicePolicyManager,
+        admin: ComponentName
+    ) {
+        val homeIntent = Intent(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        val homeActivity = context.packageManager
+            .queryIntentActivities(homeIntent, 0)
+            .filterNot { it.activityInfo.packageName == context.packageName }
+            .sortedWith(compareByDescending<ResolveInfo> {
+                it.activityInfo.packageName == "com.sec.android.app.launcher"
+            }.thenByDescending {
+                it.activityInfo.applicationInfo.flags and ApplicationInfo.FLAG_SYSTEM != 0
+            })
+            .firstOrNull()
+            ?.let { ComponentName(it.activityInfo.packageName, it.activityInfo.name) }
+
+        if (homeActivity == null) {
+            Log.w(TAG, "No system HOME activity found to restore")
+            return
+        }
+
+        val homeFilter = IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_HOME)
+            addCategory(Intent.CATEGORY_DEFAULT)
+        }
+        dpm.addPersistentPreferredActivity(admin, homeFilter, homeActivity)
+        Log.d(TAG, "Restored system HOME activity: $homeActivity")
     }
 
     // Тихая установка APK без единого диалога — работает только когда приложение
@@ -136,6 +177,12 @@ object KioskManager {
             session.commit(pendingIntent.intentSender)
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка тихой установки обновления", e)
+            AppUpdateManager.enqueueUpdateStatus(
+                context = context,
+                status = "failed",
+                targetVersionCode = versionCode,
+                message = e.localizedMessage ?: "PackageInstaller session failed"
+            )
             clearPendingSilentInstall(context, versionCode)
             session.abandon()
         } finally {
@@ -161,6 +208,32 @@ object KioskManager {
             .remove(KEY_PENDING_SINCE)
             .apply()
     }
+
+    fun relaunchAfterPackageUpdate(context: Context, reason: String) {
+        val appContext = context.applicationContext
+        val kioskEnabled = appContext
+            .getSharedPreferences("nex_settings", Context.MODE_PRIVATE)
+            .getBoolean("kiosk_mode_enabled", true)
+
+        if (kioskEnabled) {
+            configureLockTask(appContext)
+        }
+
+        val launchIntent = appContext.packageManager
+            .getLaunchIntentForPackage(appContext.packageName)
+            ?: Intent(appContext, MainActivity::class.java)
+        launchIntent
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+
+        try {
+            appContext.startActivity(launchIntent)
+            Log.i(TAG, "Relaunched app after package update: $reason")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to relaunch app after package update: $reason", e)
+        }
+    }
 }
 
 // Получает статус тихой установки от PackageInstaller (см. KioskManager.installSilently).
@@ -173,15 +246,43 @@ class InstallResultReceiver : BroadcastReceiver() {
         KioskManager.clearPendingSilentInstall(context, versionCode)
         if (status == PackageInstaller.STATUS_SUCCESS) {
             Log.i("InstallResultReceiver", "Обновление до versionCode=$versionCode установлено успешно")
+            AppUpdateManager.enqueueUpdateStatus(
+                context = context,
+                status = "installed",
+                targetVersionCode = versionCode,
+                message = "PackageInstaller reported success"
+            )
+            KioskManager.relaunchAfterPackageUpdate(context, "silent install versionCode=$versionCode")
         } else {
             Log.e(
                 "InstallResultReceiver",
                 "Ошибка установки versionCode=$versionCode: status=$status message=$message"
+            )
+            AppUpdateManager.enqueueUpdateStatus(
+                context = context,
+                status = "failed",
+                targetVersionCode = versionCode,
+                message = "PackageInstaller status=$status message=$message"
             )
         }
     }
 
     companion object {
         const val EXTRA_VERSION_CODE = "com.example.extra.UPDATE_VERSION_CODE"
+    }
+}
+
+class PackageReplacedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_MY_PACKAGE_REPLACED) return
+        Log.i("PackageReplacedReceiver", "Package replaced, relaunching app")
+        AppUpdateManager.enqueueUpdateStatus(
+            context = context,
+            status = "installed",
+            targetVersionCode = BuildConfig.VERSION_CODE,
+            targetVersionName = BuildConfig.VERSION_NAME,
+            message = "MY_PACKAGE_REPLACED received"
+        )
+        KioskManager.relaunchAfterPackageUpdate(context, "MY_PACKAGE_REPLACED")
     }
 }

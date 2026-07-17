@@ -321,21 +321,15 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     NexApiClient.init(this)
+    AppUpdateManager.sendQueuedUpdateStatusAsync(this)
     requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-    
-    // Set modern immersive sticky full-screen mode to hide system bars and bottom buttons
-    window.decorView.systemUiVisibility = (
-        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-        or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-        or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-        or View.SYSTEM_UI_FLAG_FULLSCREEN
-    )
+
     window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
     val settingsPrefs = getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE)
     val initialKioskModeEnabled = settingsPrefs.getBoolean("kiosk_mode_enabled", true)
+    enableEdgeToEdge()
+    applyKioskWindowMode(initialKioskModeEnabled)
 
     // Если устройство назначено Device Owner (см. KioskManager.kt), политики киоска
     // применяем только когда режим включён. Иначе сервисные системные экраны будут
@@ -346,12 +340,6 @@ class MainActivity : ComponentActivity() {
       KioskManager.disableKioskPolicies(this)
     }
 
-    WindowCompat.setDecorFitsSystemWindows(window, false)
-    val controller = WindowCompat.getInsetsController(window, window.decorView)
-    controller.hide(WindowInsetsCompat.Type.systemBars())
-    controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-
-    enableEdgeToEdge()
     setContent {
       val context = androidx.compose.ui.platform.LocalContext.current
       val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
@@ -370,17 +358,22 @@ class MainActivity : ComponentActivity() {
           onKioskModeToggle = { enabled ->
             kioskModeEnabled = enabled
             settingsPrefs.edit().putBoolean("kiosk_mode_enabled", enabled).apply()
+            applyKioskWindowMode(enabled)
             if (!enabled) {
               try {
                 stopLockTask()
-              } catch (e: Exception) {}
+              } catch (e: Exception) {
+                android.util.Log.w("MainActivity", "stopLockTask() ignored", e)
+              }
               KioskManager.disableKioskPolicies(this)
             } else {
               if (KioskManager.isDeviceOwner(this)) {
                 KioskManager.configureLockTask(this)
                 try {
                   startLockTask()
-                } catch (e: Exception) {}
+                } catch (e: Exception) {
+                  android.util.Log.e("MainActivity", "Failed to startLockTask()", e)
+                }
               }
             }
           }
@@ -397,6 +390,7 @@ class MainActivity : ComponentActivity() {
     val isOwner = KioskManager.isDeviceOwner(this)
     val settingsPrefs = getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE)
     val kioskEnabled = settingsPrefs.getBoolean("kiosk_mode_enabled", true)
+    applyKioskWindowMode(kioskEnabled)
     
     android.util.Log.d("MainActivity", "onResume: isDeviceOwner=$isOwner, kioskEnabled=$kioskEnabled")
     if (isOwner && kioskEnabled) {
@@ -407,6 +401,28 @@ class MainActivity : ComponentActivity() {
       } catch (e: Exception) {
         android.util.Log.e("MainActivity", "Failed to startLockTask()", e)
       }
+    }
+  }
+
+  private fun applyKioskWindowMode(enabled: Boolean) {
+    WindowCompat.setDecorFitsSystemWindows(window, !enabled)
+    val controller = WindowCompat.getInsetsController(window, window.decorView)
+
+    if (enabled) {
+      window.decorView.systemUiVisibility = (
+          View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+          or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+          or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+          or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+          or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+          or View.SYSTEM_UI_FLAG_FULLSCREEN
+      )
+      controller.hide(WindowInsetsCompat.Type.systemBars())
+      controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+    } else {
+      window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+      controller.show(WindowInsetsCompat.Type.systemBars())
+      window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
     }
   }
 }
@@ -590,33 +606,8 @@ fun KioskAppRoot(
   var updateDownloadProgress by remember { mutableStateOf<Int?>(null) }
   var updateDownloadedFile by remember { mutableStateOf<java.io.File?>(null) }
   var updateErrorText by remember { mutableStateOf<String?>(null) }
-
-  val isDeviceOwnerKiosk = remember(context) { KioskManager.isDeviceOwner(context) }
-
-  LaunchedEffect(Unit) {
-    while (true) {
-      val release = AppUpdateManager.checkForUpdate()
-      if (release != null) {
-        if (isDeviceOwnerKiosk) {
-          // Device Owner: скачиваем и ставим полностью в фоне, без единого диалога.
-          if (KioskManager.shouldAttemptSilentInstall(context, release.versionCode)) {
-            try {
-              val file = AppUpdateManager.downloadApk(context, release) { }
-              KioskManager.installSilently(context, file, release.versionCode)
-            } catch (e: Exception) {
-              // Попробуем ещё раз при следующей проверке
-            }
-          }
-        } else if (release.versionCode != availableUpdate?.versionCode) {
-          // Обычное устройство: только диалог с подтверждением пользователя.
-          availableUpdate = release
-          updateDownloadedFile = null
-          updateErrorText = null
-        }
-      }
-      delay(60 * 60 * 1000L) // раз в час
-    }
-  }
+  var pendingSilentUpdate by remember { mutableStateOf<AppVersionResponse?>(null) }
+  var isSilentUpdateInProgress by remember { mutableStateOf(false) }
 
   // Persistent settings for blood pressure monitor, breathalyzer, and thermometer
   var tonometerMode by remember { mutableStateOf(prefs.getString("tonometer_mode", "simulation") ?: "simulation") }
@@ -697,6 +688,82 @@ fun KioskAppRoot(
   var temperatureValue by remember { mutableStateOf<Double?>(null) }
   var selectedComplaintsList by remember { mutableStateOf<List<String>>(emptyList()) }
   var plainComplaintsState by remember { mutableStateOf<String?>(null) } // "Pending", "None" or symptom summary
+
+  val isIdleForSilentUpdate =
+    currentEmployeeProfile == null &&
+      examSendStatus != ExamSendStatus.SENDING &&
+      (currentScreen == KioskScreen.LANGUAGE_SELECTION || currentScreen == KioskScreen.AUTHORIZATION)
+  val latestIsIdleForSilentUpdate by rememberUpdatedState(isIdleForSilentUpdate)
+
+  suspend fun installReleaseSilentlyWhenAllowed(release: AppVersionResponse) {
+    if (!KioskManager.isDeviceOwner(context)) return
+    if (!latestIsIdleForSilentUpdate) {
+      pendingSilentUpdate = release
+      return
+    }
+    if (isSilentUpdateInProgress) return
+    if (!KioskManager.shouldAttemptSilentInstall(context, release.versionCode)) return
+
+    isSilentUpdateInProgress = true
+    try {
+      val file = AppUpdateManager.downloadApk(context, release) { }
+      AppUpdateManager.enqueueUpdateStatus(
+        context = context,
+        status = "downloaded",
+        targetVersionCode = release.versionCode,
+        targetVersionName = release.versionName,
+        apkUrl = release.apkUrl
+      )
+      AppUpdateManager.enqueueUpdateStatus(
+        context = context,
+        status = "install_started",
+        targetVersionCode = release.versionCode,
+        targetVersionName = release.versionName,
+        apkUrl = release.apkUrl
+      )
+      KioskManager.installSilently(context, file, release.versionCode)
+      pendingSilentUpdate = null
+    } catch (e: Exception) {
+      AppUpdateManager.enqueueUpdateStatus(
+        context = context,
+        status = "failed",
+        targetVersionCode = release.versionCode,
+        targetVersionName = release.versionName,
+        apkUrl = release.apkUrl,
+        message = e.localizedMessage ?: "Silent update failed"
+      )
+      pendingSilentUpdate = release
+    } finally {
+      isSilentUpdateInProgress = false
+    }
+  }
+
+  LaunchedEffect(Unit) {
+    while (true) {
+      val release = AppUpdateManager.checkForUpdate()
+      if (release != null) {
+        if (KioskManager.isDeviceOwner(context)) {
+          installReleaseSilentlyWhenAllowed(release)
+        } else if (release.versionCode != availableUpdate?.versionCode) {
+          // Обычное устройство: только диалог с подтверждением пользователя.
+          availableUpdate = release
+          updateDownloadedFile = null
+          updateErrorText = null
+        }
+      }
+      delay(30 * 1000L)
+    }
+  }
+
+  LaunchedEffect(
+    currentScreen,
+    currentEmployeeProfile,
+    examSendStatus,
+    pendingSilentUpdate?.versionCode
+  ) {
+    val release = pendingSilentUpdate ?: return@LaunchedEffect
+    installReleaseSilentlyWhenAllowed(release)
+  }
 
   // Dynamic status of metric cells based on active workflow step
   val metrics = remember(activeLanguage, bpSystolic, bpDiastolic, heartRateValue, breathalyzerValue, temperatureValue, plainComplaintsState, currentStep) {
@@ -992,7 +1059,7 @@ fun KioskAppRoot(
   // что и видимая кнопка "назад" на экране (если она есть), иначе игнорируется —
   // это киоск, случайный системный back не должен выкидывать из приложения или
   // сбрасывать текущий шаг медосмотра.
-  BackHandler(enabled = true) {
+  BackHandler(enabled = kioskModeEnabled) {
     when (currentScreen) {
       KioskScreen.SETTINGS -> {
         currentScreen = if (currentEmployeeProfile != null) KioskScreen.DASHBOARD else KioskScreen.AUTHORIZATION
@@ -1280,9 +1347,24 @@ fun KioskAppRoot(
                 val file = AppUpdateManager.downloadApk(context, pendingUpdate) { progress ->
                   updateDownloadProgress = progress
                 }
+                AppUpdateManager.enqueueUpdateStatus(
+                  context = context,
+                  status = "downloaded",
+                  targetVersionCode = pendingUpdate.versionCode,
+                  targetVersionName = pendingUpdate.versionName,
+                  apkUrl = pendingUpdate.apkUrl
+                )
                 updateDownloadProgress = null
                 updateDownloadedFile = file
               } catch (e: Exception) {
+                AppUpdateManager.enqueueUpdateStatus(
+                  context = context,
+                  status = "failed",
+                  targetVersionCode = pendingUpdate.versionCode,
+                  targetVersionName = pendingUpdate.versionName,
+                  apkUrl = pendingUpdate.apkUrl,
+                  message = e.localizedMessage ?: "Manual update download failed"
+                )
                 updateDownloadProgress = null
                 updateErrorText = e.localizedMessage ?: "Ошибка загрузки обновления"
               }
@@ -1292,12 +1374,27 @@ fun KioskAppRoot(
             val file = updateDownloadedFile
             if (file != null) {
               if (KioskManager.isDeviceOwner(context)) {
+                AppUpdateManager.enqueueUpdateStatus(
+                  context = context,
+                  status = "install_started",
+                  targetVersionCode = pendingUpdate.versionCode,
+                  targetVersionName = pendingUpdate.versionName,
+                  apkUrl = pendingUpdate.apkUrl
+                )
                 KioskManager.installSilently(context, file, pendingUpdate.versionCode)
                 availableUpdate = null
                 updateDownloadedFile = null
                 updateDownloadProgress = null
                 updateErrorText = null
               } else if (AppUpdateManager.canInstallPackages(context)) {
+                AppUpdateManager.enqueueUpdateStatus(
+                  context = context,
+                  status = "install_started",
+                  targetVersionCode = pendingUpdate.versionCode,
+                  targetVersionName = pendingUpdate.versionName,
+                  apkUrl = pendingUpdate.apkUrl,
+                  message = "Started system package installer"
+                )
                 AppUpdateManager.installApk(context, file)
               } else {
                 context.startActivity(AppUpdateManager.unknownSourcesSettingsIntent(context))

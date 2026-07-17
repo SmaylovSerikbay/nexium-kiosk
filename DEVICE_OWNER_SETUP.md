@@ -13,13 +13,19 @@
 Текущая команда для этого проекта:
 
 ```bash
-adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 ```
 
 Значения взяты из проекта:
 
 - `applicationId`: `com.aistudio.nexiumhealth.qptwyx`
-- `DeviceAdminReceiver`: `.KioskDeviceAdminReceiver`
+- `DeviceAdminReceiver`: `com.example.KioskDeviceAdminReceiver`
+
+Важно: не используйте сокращенную форму `.KioskDeviceAdminReceiver` для этой сборки. В проекте `applicationId` отличается от Kotlin package классов. Поэтому Android развернет `.KioskDeviceAdminReceiver` в неверный компонент `com.aistudio.nexiumhealth.qptwyx.KioskDeviceAdminReceiver`. Правильный полный компонент:
+
+```text
+com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
+```
 
 ## Подготовка планшета
 
@@ -68,7 +74,7 @@ adb install app-debug.apk
 Назначьте приложение Device Owner:
 
 ```bash
-adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 ```
 
 Проверьте владельца устройства:
@@ -86,7 +92,21 @@ adb shell dumpsys device_policy | grep -i "device owner"
 Ожидаемо устройство должно показать Device Owner с компонентом:
 
 ```text
-com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
+```
+
+После успешного назначения Device Owner перезапустите приложение, чтобы оно заново
+прочитало политики устройства и включило kiosk/silent-update режим:
+
+```bash
+adb shell am force-stop com.aistudio.nexiumhealth.qptwyx
+adb shell monkey -p com.aistudio.nexiumhealth.qptwyx 1
+```
+
+Или перезагрузите планшет:
+
+```bash
+adb reboot
 ```
 
 ## Короткий чеклист
@@ -94,9 +114,64 @@ com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
 ```bash
 adb devices
 adb install app-release.apk
-adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 adb shell dpm list-owners
+adb shell am force-stop com.aistudio.nexiumhealth.qptwyx
+adb shell monkey -p com.aistudio.nexiumhealth.qptwyx 1
 ```
+
+## Google Play Protect при установке APK
+
+Если появляется окно `Google Play Защита` / `Приложение заблокировано для защиты устройства`,
+это означает, что APK устанавливается через обычный системный установщик или открыт вручную
+из файла/браузера. Для Device Owner обновления должны идти через silent install
+`PackageInstaller` без системного окна установки.
+
+Важно:
+
+- первичный APK ставьте командой `adb install`, а не открытием APK на планшете;
+- после `dpm set-device-owner` перезапустите приложение или планшет;
+- не запускайте скачанный APK вручную из файлового менеджера;
+- если приложение показывает собственный диалог обновления и затем открывается Play Protect,
+  значит код пошел по fallback-пути обычной установки, а не по Device Owner silent install.
+
+Проверьте, что Device Owner действительно назначен:
+
+```bash
+adb shell dpm list-owners
+adb shell dumpsys device_policy | grep -i "device owner"
+```
+
+Ожидаемый компонент:
+
+```text
+com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
+```
+
+Проверьте логи во время автообновления:
+
+```bash
+adb logcat | grep -E "KioskManager|InstallResultReceiver|PackageInstaller|isDeviceOwner"
+```
+
+Ожидаемые признаки правильного silent install:
+
+```text
+KioskManager: isDeviceOwner: true
+InstallResultReceiver: Обновление до versionCode=... установлено успешно
+```
+
+Если `isDeviceOwner: false`, хотя в настройках написано `DEVICE OWNER: ACTIVE`,
+перезапустите процесс приложения:
+
+```bash
+adb shell am force-stop com.aistudio.nexiumhealth.qptwyx
+adb shell monkey -p com.aistudio.nexiumhealth.qptwyx 1
+```
+
+Если Play Protect появляется при первичной установке, значит установка идет не через
+`adb install`. Временно можно нажать `Все равно установить`, но для production-планшетов
+лучше использовать ADB provisioning или Android Enterprise / Managed Google Play.
 
 ## Типовые ошибки
 
@@ -134,7 +209,7 @@ adb shell pm list packages | grep nexium
 3. Используйте команду:
 
 ```bash
-adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 ```
 
 ### ComponentInfo does not exist
@@ -145,7 +220,7 @@ adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdmi
 
 ```bash
 adb install -r app-release.apk
-adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 ```
 
 ### Device is already provisioned
@@ -159,7 +234,7 @@ adb shell dpm set-device-owner com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdmi
 Ошибка может выглядеть так:
 
 ```text
-com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver was already an admin for user 0. No need to set it again.
+com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver was already an admin for user 0. No need to set it again.
 
 Exception occurred while executing 'set-device-owner':
 java.lang.IllegalArgumentException: Not active admin: ComponentInfo{com.aistudio.nexiumhealth.qptwyx/com.aistudio.nexiumhealth.qptwyx.KioskDeviceAdminReceiver}
@@ -172,8 +247,8 @@ java.lang.IllegalArgumentException: Not active admin: ComponentInfo{com.aistudio
 Сначала попробуйте сбросить active admin и повторить:
 
 ```bash
-adb shell dpm remove-active-admin --user 0 com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
-adb shell dpm set-device-owner --user 0 com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm remove-active-admin --user 0 com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner --user 0 com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 adb shell dpm list-owners
 ```
 
@@ -181,7 +256,7 @@ adb shell dpm list-owners
 
 ```bash
 adb install app-release.apk
-adb shell dpm set-device-owner --user 0 com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm set-device-owner --user 0 com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 adb shell dpm list-owners
 ```
 
@@ -200,7 +275,7 @@ adb shell dpm list-owners
 Если нужно попробовать снять admin через ADB:
 
 ```bash
-adb shell dpm remove-active-admin com.aistudio.nexiumhealth.qptwyx/.KioskDeviceAdminReceiver
+adb shell dpm remove-active-admin com.aistudio.nexiumhealth.qptwyx/com.example.KioskDeviceAdminReceiver
 ```
 
 На некоторых версиях Android удаление Device Owner может быть запрещено политиками. В этом случае используйте factory reset.

@@ -5299,6 +5299,10 @@ object OmronBleManager {
     }
     try {
       val device = adapter.getRemoteDevice(macAddress)
+      if (device.bondState != BluetoothDevice.BOND_BONDED) {
+        statusText.value = "Тонометр не сопряжён. Нажмите «СОПРЯЧЬ» и подтвердите Bluetooth."
+        return
+      }
       statusText.value = "Подключение к ${device.name ?: "Omron M4"}..."
       bestTimestampValue = -1L
       lastResult.value = null
@@ -5310,6 +5314,7 @@ object OmronBleManager {
 
       activeGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
+          android.util.Log.d("OmronBleManager", "Connection state=$newState status=$status bond=${device.bondState}")
           if (newState == BluetoothProfile.STATE_CONNECTED) {
             statusText.value = "Соединение установлено. Поиск служб..."
             gatt?.discoverServices()
@@ -5328,8 +5333,10 @@ object OmronBleManager {
                 onValueRead(result.first, result.second, result.third)
               }
               lastResult.value = null // сбрасываем для следующего сеанса
+            } else if (device.bondState != BluetoothDevice.BOND_BONDED) {
+              statusText.value = "Тонометр потерял сопряжение. Нажмите «СОПРЯЧЬ» и подтвердите Bluetooth."
             } else if (status == 19 || status == 22) {
-              statusText.value = "Сопряжение не завершено. Включите тонометр и подтвердите запрос Bluetooth."
+              statusText.value = "Тонометр отключился. Включите его, начните замер и повторите считывание."
             } else {
               statusText.value = "Отключено"
             }

@@ -5376,7 +5376,7 @@ object OmronBleManager {
               val descUuid = java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
               val descriptor = characteristic.getDescriptor(descUuid)
               if (descriptor != null) {
-                descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
                 gatt.writeDescriptor(descriptor)
                 statusText.value = "Готов! Начните замер на Omron M4..."
               }

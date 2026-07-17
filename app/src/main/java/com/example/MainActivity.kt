@@ -2643,6 +2643,7 @@ fun Step2BloodPressure(
   val lang = LocalAppLanguage.current
   val drawMutedColor = AppleMutedGrey
   var isCapturing by remember { mutableStateOf(false) }
+  var showOmronTransferDialog by remember { mutableStateOf(false) }
   var progressValue by remember { mutableStateOf(0f) }
   
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -2982,7 +2983,9 @@ fun Step2BloodPressure(
       }
     } else {
       Button(
-        onClick = { isCapturing = true },
+        onClick = {
+          if (tonometerMode == "omron_ble") showOmronTransferDialog = true else isCapturing = true
+        },
         colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
@@ -3004,6 +3007,23 @@ fun Step2BloodPressure(
           fontSize = 14.sp
         )
       }
+    }
+
+    if (showOmronTransferDialog) {
+      AlertDialog(
+        onDismissRequest = { showOmronTransferDialog = false },
+        title = { Text("Передача данных Omron") },
+        text = { Text("Нажмите один раз кнопку Bluetooth на тонометре, дождитесь мигающей «o», затем нажмите «Считать».") },
+        confirmButton = {
+          TextButton(onClick = {
+            showOmronTransferDialog = false
+            isCapturing = true
+          }) { Text("Считать") }
+        },
+        dismissButton = {
+          TextButton(onClick = { showOmronTransferDialog = false }) { Text("Отмена") }
+        }
+      )
     }
   }
 }
@@ -5523,6 +5543,7 @@ fun SettingsScreen(
   var foundDevices by remember { mutableStateOf<List<MockBluetoothDevice>>(emptyList()) }
   var scanErrorText by remember { mutableStateOf("") }
   var selectedDeviceForBinding by remember { mutableStateOf<MockBluetoothDevice?>(null) }
+  var showOmronPairingDialog by remember { mutableStateOf(false) }
   var showKioskPasswordDialog by remember { mutableStateOf(false) }
 
   val permissionLauncher = rememberLauncherForActivityResult(
@@ -6619,9 +6640,13 @@ fun SettingsScreen(
           // Button 1: Tonometer
           Button(
             onClick = {
-              onSaveDevice("tonometer", "omron_ble", dev.address, dev.name)
-              selectedDeviceForBinding = null
-              triggerBluetoothBonding(context, dev)
+              if (dev.name.contains("omron", ignoreCase = true) || dev.name.contains("M4 Intelli IT", ignoreCase = true)) {
+                showOmronPairingDialog = true
+              } else {
+                onSaveDevice("tonometer", "omron_ble", dev.address, dev.name)
+                selectedDeviceForBinding = null
+                triggerBluetoothBonding(context, dev)
+              }
             },
             colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
             shape = RoundedCornerShape(10.dp),
@@ -6714,5 +6739,24 @@ fun SettingsScreen(
       containerColor = AppleCharcoal,
       shape = RoundedCornerShape(18.dp)
     )
+
+    if (showOmronPairingDialog) {
+      AlertDialog(
+        onDismissRequest = { showOmronPairingDialog = false },
+        title = { Text("Сопряжение Omron") },
+        text = { Text("Удерживайте кнопку Bluetooth на Omron 3–5 секунд, пока не начнёт мигать «P». Затем нажмите «Готово» и сразу подтвердите системное Bluetooth-окно.") },
+        confirmButton = {
+          TextButton(onClick = {
+            showOmronPairingDialog = false
+            onSaveDevice("tonometer", "omron_ble", dev.address, dev.name)
+            selectedDeviceForBinding = null
+            triggerBluetoothBonding(context, dev)
+          }) { Text("Готово") }
+        },
+        dismissButton = {
+          TextButton(onClick = { showOmronPairingDialog = false }) { Text("Отмена") }
+        }
+      )
+    }
   }
 }

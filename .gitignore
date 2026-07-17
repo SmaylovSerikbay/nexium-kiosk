@@ -18,3 +18,13 @@ local.properties
 debug.keystore
 my-upload-key.jks
 *.jks
+
+# Local IDE state
+/.idea/deploymentTargetSelector.xml
+/.idea/planningMode.xml
+
+# Local release artifacts
+/app/release/
+
+# Temporary chat attachments
+*.tmp

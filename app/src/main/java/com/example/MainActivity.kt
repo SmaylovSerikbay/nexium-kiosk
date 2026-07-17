@@ -5311,7 +5311,6 @@ object OmronBleManager {
       activeGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
           if (newState == BluetoothProfile.STATE_CONNECTED) {
-            isConnected.value = true
             statusText.value = "Соединение установлено. Поиск служб..."
             gatt?.discoverServices()
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
@@ -5329,6 +5328,8 @@ object OmronBleManager {
                 onValueRead(result.first, result.second, result.third)
               }
               lastResult.value = null // сбрасываем для следующего сеанса
+            } else if (status == 19 || status == 22) {
+              statusText.value = "Сопряжение не завершено. Включите тонометр и подтвердите запрос Bluetooth."
             } else {
               statusText.value = "Отключено"
             }
@@ -5363,9 +5364,11 @@ object OmronBleManager {
         override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: android.bluetooth.BluetoothGattDescriptor?, status: Int) {
           if (status == BluetoothGatt.GATT_SUCCESS) {
             android.util.Log.d("OmronBleManager", "Descriptor written OK — ожидаем данные давления")
+            isConnected.value = true
             statusText.value = "✓ Подписка активна. Начните замер на Omron..."
           } else {
             android.util.Log.w("OmronBleManager", "Descriptor write failed: status=$status")
+            isConnected.value = false
             statusText.value = "Ошибка подписки: $status"
           }
         }
@@ -6528,7 +6531,7 @@ fun SettingsScreen(
                 ) {
                   Text(
                     text = if (isDeviceActive) {
-                      if (activeLanguage == AppLanguage.KAZAKH) "Қосылды" else "АКТИВЕН"
+                      if (activeLanguage == AppLanguage.KAZAKH) "Таңдалды" else "ВЫБРАН"
                     } else {
                       if (activeLanguage == AppLanguage.KAZAKH) "Қосу" else "СОПРЯЧЬ"
                     },

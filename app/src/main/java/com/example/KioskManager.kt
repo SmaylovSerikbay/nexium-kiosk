@@ -34,6 +34,7 @@ import java.io.File
 // ставятся через системный диалог установки (см. AppUpdateManager.kt).
 object KioskManager {
     private const val TAG = "KioskManager"
+    private const val SETTINGS_PACKAGE = "com.android.settings"
     private const val UPDATE_PREFS = "nex_silent_updates"
     private const val KEY_PENDING_VERSION = "pending_version"
     private const val KEY_PENDING_SINCE = "pending_since"
@@ -62,7 +63,7 @@ object KioskManager {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
         val admin = KioskDeviceAdminReceiver.componentName(context)
         try {
-            dpm.setLockTaskPackages(admin, arrayOf(context.packageName))
+            dpm.setLockTaskPackages(admin, arrayOf(context.packageName, SETTINGS_PACKAGE))
             Log.d(TAG, "setLockTaskPackages successful")
 
             val homeFilter = IntentFilter(Intent.ACTION_MAIN).apply {

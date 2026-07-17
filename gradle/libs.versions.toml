@@ -38,6 +38,10 @@ robolectric = "4.16.1"
 roborazzi = "1.59.0"
 firebaseBom = "34.12.0"
 secretsGradlePlugin = "2.0.1"
+usbSerial = "3.8.0"
+nordicScanner = "1.6.0"
+nordicBle = "2.11.0"
+opencsv = "5.12.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -87,6 +91,13 @@ roborazzi-compose = { group = "io.github.takahirom.roborazzi", name = "roborazzi
 roborazzi-junit-rule = { group = "io.github.takahirom.roborazzi", name = "roborazzi-junit-rule", version.ref = "roborazzi" }
 firebase-bom = { group = "com.google.firebase", name = "firebase-bom", version.ref = "firebaseBom" }
 firebase-ai = { group = "com.google.firebase", name = "firebase-ai" }
+usb-serial = { group = "com.github.mik3y", name = "usb-serial-for-android", version.ref = "usbSerial" }
+nordic-scanner = { group = "no.nordicsemi.android.support.v18", name = "scanner", version.ref = "nordicScanner" }
+nordic-ble = { group = "no.nordicsemi.android", name = "ble", version.ref = "nordicBle" }
+nordic-ble-common = { group = "no.nordicsemi.android", name = "ble-common", version.ref = "nordicBle" }
+nordic-ble-ktx = { group = "no.nordicsemi.android", name = "ble-ktx", version.ref = "nordicBle" }
+nordic-ble-livedata = { group = "no.nordicsemi.android", name = "ble-livedata", version.ref = "nordicBle" }
+opencsv = { group = "com.opencsv", name = "opencsv", version.ref = "opencsv" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

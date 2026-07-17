@@ -14,8 +14,8 @@ android {
     applicationId = "com.aistudio.nexiumhealth.qptwyx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 15
-    versionName = "1.15"
+    versionCode = 17
+    versionName = "1.17"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -100,33 +100,30 @@ dependencies {
   // implementation(libs.play.services.location)
   implementation(libs.retrofit)
   // USB Serial for Dingo E-200 breathalyzer (RS-232/MAX40 over USB-CDC)
-  implementation("com.github.mik3y:usb-serial-for-android:3.8.0")
+  implementation(libs.usb.serial)
   // Microlife Nordic SDK AAR (from vendor SDK)
   implementation(files("libs/nordic_sdk-v3.0.7-9eb28af-release.aar"))
 
   // Nordic BLE scanner (REQUIRED by Microlife SDK's BluetoothScanner)
   // Must be before the new ble libs to avoid class conflicts
-  implementation("no.nordicsemi.android.support.v18:scanner:1.6.0")
+  implementation(libs.nordic.scanner)
 
   // Nordic BLE library suite (used by other device SDKs)
-  implementation("no.nordicsemi.android:ble:2.11.0")
-  implementation("no.nordicsemi.android:ble-common:2.11.0")
-  implementation("no.nordicsemi.android:ble-ktx:2.11.0")
-  implementation("no.nordicsemi.android:ble-livedata:2.11.0")
+  implementation(libs.nordic.ble)
+  implementation(libs.nordic.ble.common)
+  implementation(libs.nordic.ble.ktx)
+  implementation(libs.nordic.ble.livedata)
 
   // CSV parsing (Microlife SDK demo dependency)
-  implementation("com.opencsv:opencsv:5.12.0")
+  implementation(libs.opencsv)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
-  testImplementation(libs.androidx.junit)
   testImplementation(libs.junit)
   testImplementation(libs.kotlinx.coroutines.test)
   testImplementation(libs.robolectric)
   testImplementation(libs.roborazzi)
   testImplementation(libs.roborazzi.compose)
   testImplementation(libs.roborazzi.junit.rule)
-  androidTestImplementation(platform(libs.androidx.compose.bom))
-  androidTestImplementation(libs.androidx.compose.ui.test.junit4)
   androidTestImplementation(libs.androidx.espresso.core)
   androidTestImplementation(libs.androidx.junit)
   androidTestImplementation(libs.androidx.runner)

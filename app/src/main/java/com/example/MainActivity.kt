@@ -5464,7 +5464,7 @@ object OmronBleManager {
             android.util.Log.w("OmronBleManager", "Пакет слишком короткий: ${value.size} байт")
           }
         }
-      })
+      }, BluetoothDevice.TRANSPORT_LE)
     } catch (e: Exception) {
       statusText.value = "Ошибка: ${e.localizedMessage}"
     }

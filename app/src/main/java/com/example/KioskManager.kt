@@ -1,6 +1,7 @@
 package com.example
 
 import android.app.admin.DevicePolicyManager
+import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.ComponentName
@@ -38,6 +39,7 @@ object KioskManager {
     private const val KEY_PENDING_SINCE = "pending_since"
     private const val PENDING_INSTALL_TIMEOUT_MS = 2 * 60 * 60 * 1000L
     private const val KIOSK_MAX_TIME_TO_LOCK_MS = Long.MAX_VALUE
+    private const val WINDOWING_MODE_FULLSCREEN = 1
 
     fun isDeviceOwner(context: Context): Boolean {
         val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
@@ -48,8 +50,8 @@ object KioskManager {
     }
 
     // Разрешает приложению работать в Lock Task Mode и назначает MainActivity
-    // постоянным HOME-приложением. После загрузки Android запускает HOME сам,
-    // поэтому отдельный BOOT_COMPLETED receiver не нужен.
+    // постоянным HOME-приложением. BOOT_COMPLETED receiver остаётся страховкой
+    // для Samsung-прошивок, где системный Launcher может остаться обычным HOME.
     // Саму блокировку (startLockTask) вызывает MainActivity.onResume.
     fun configureLockTask(context: Context) {
         Log.d(TAG, "configureLockTask called")
@@ -219,20 +221,32 @@ object KioskManager {
             configureLockTask(appContext)
         }
 
-        val launchIntent = appContext.packageManager
-            .getLaunchIntentForPackage(appContext.packageName)
-            ?: Intent(appContext, MainActivity::class.java)
-        launchIntent
+        val launchIntent = Intent(appContext, MainActivity::class.java)
+            .setAction(Intent.ACTION_MAIN)
+            .addCategory(Intent.CATEGORY_LAUNCHER)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            .addFlags(Intent.FLAG_ACTIVITY_TASK_ON_HOME)
+            .addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
 
         try {
-            appContext.startActivity(launchIntent)
+            appContext.startActivity(launchIntent, fullscreenLaunchOptions())
             Log.i(TAG, "Relaunched app after package update: $reason")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to relaunch app after package update: $reason", e)
         }
+    }
+
+    private fun fullscreenLaunchOptions(): android.os.Bundle {
+        val options = ActivityOptions.makeBasic()
+        try {
+            ActivityOptions::class.java
+                .getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
+                .invoke(options, WINDOWING_MODE_FULLSCREEN)
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to request fullscreen launch windowing mode", e)
+        }
+        return options.toBundle()
     }
 }
 
@@ -284,5 +298,12 @@ class PackageReplacedReceiver : BroadcastReceiver() {
             message = "MY_PACKAGE_REPLACED received"
         )
         KioskManager.relaunchAfterPackageUpdate(context, "MY_PACKAGE_REPLACED")
+    }
+}
+
+class BootCompletedReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
+        KioskManager.relaunchAfterPackageUpdate(context, "BOOT_COMPLETED")
     }
 }

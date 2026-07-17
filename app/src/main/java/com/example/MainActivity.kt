@@ -52,6 +52,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -231,8 +232,16 @@ object AppText {
   val confirmDept = Trans("Должность:", "Лауазымы:")
   val yesItsMe = Trans("ДА, ЭТО Я", "ИӘ, БҰЛ МЕН")
   val noNotMe = Trans("НЕТ, НЕ Я", "ЖОҚ, МЕН ЕМЕС")
-  val errorVerificationFailed = Trans("Ошибка связи с сайтом", "Сайтпен байланысу қатесі")
+  val errorVerificationFailed = Trans(
+    "Не удалось проверить сотрудника. Проверьте интернет и повторите попытку.",
+    "Қызметкерді тексеру мүмкін болмады. Интернетті тексеріп, қайталап көріңіз."
+  )
   val errorNoInternet = Trans("Отсутствует соединение с интернетом", "Интернет байланысы жоқ")
+  val errorEmployeeOrgMismatch = Trans(
+    "Этот сотрудник не относится к организации, к которой привязан данный аппарат. Обратитесь к администратору для проверки организации сотрудника или токена аппарата.",
+    "Бұл қызметкер осы аппарат байланыстырылған ұйымға жатпайды. Қызметкердің ұйымын немесе аппарат токенін тексеру үшін әкімшіге хабарласыңыз."
+  )
+  val errorExamSendFailed = Trans("Не удалось отправить медосмотр", "Медициналық тексеруді жіберу мүмкін болмады")
 }
 
 enum class StepState {
@@ -575,9 +584,10 @@ fun KioskAppRoot(
 
   var deviceToken by remember { mutableStateOf(NexApiClient.deviceToken) }
   var tokenInfo by remember { mutableStateOf<TokenInfoResponse?>(null) }
+  var tokenInfoError by remember { mutableStateOf("") }
   var isFetchingTokenInfo by remember { mutableStateOf(false) }
 
-  LaunchedEffect(deviceToken) {
+  LaunchedEffect(deviceToken, activeLanguage) {
     if (deviceToken.isNotEmpty()) {
       isFetchingTokenInfo = true
       try {
@@ -586,16 +596,20 @@ fun KioskAppRoot(
         }
         if (response.isSuccessful) {
           tokenInfo = response.body()
+          tokenInfoError = ""
         } else {
           tokenInfo = null
+          tokenInfoError = ApiErrorText.fromHttp(response.code(), response.errorBody()?.string(), activeLanguage)
         }
       } catch (e: Exception) {
         tokenInfo = null
+        tokenInfoError = ApiErrorText.fromThrowable(e, activeLanguage)
       } finally {
         isFetchingTokenInfo = false
       }
     } else {
       tokenInfo = null
+      tokenInfoError = ""
     }
   }
 
@@ -862,22 +876,20 @@ fun KioskAppRoot(
           e.printStackTrace()
         }
       } else {
-        val errBody = response.errorBody()?.string() ?: ""
-        examSendErrorMessage = "HTTP ${response.code()}: ${response.message()}"
-        if (errBody.isNotEmpty()) {
-          try {
-            val errJson = org.json.JSONObject(errBody)
-            val desc = errJson.optString("message") ?: errJson.optString("error")
-            if (!desc.isNullOrEmpty()) {
-              examSendErrorMessage += " ($desc)"
-            }
-          } catch(e: Exception) {
-            examSendErrorMessage += " ($errBody)"
-          }
-        }
+        val errBody = response.errorBody()?.string()
+        examSendErrorMessage = ApiErrorText.fromHttp(
+          code = response.code(),
+          errorBody = errBody,
+          lang = lang,
+          operation = AppText.errorExamSendFailed.get(lang)
+        )
       }
     } catch (e: Exception) {
-      examSendErrorMessage = e.localizedMessage ?: e.message ?: "Connection error / Ошибка соединения"
+      examSendErrorMessage = ApiErrorText.fromThrowable(
+        throwable = e,
+        lang = lang,
+        operation = AppText.errorExamSendFailed.get(lang)
+      )
     }
 
     if (success) {
@@ -1029,7 +1041,15 @@ fun KioskAppRoot(
         }
       } catch (e: Exception) {
         shakeTrigger += 1
-        pinErrorText = AppText.errorVerificationFailed.get(activeLanguage)
+        pinErrorText = ApiErrorText.fromThrowable(
+          throwable = e,
+          lang = activeLanguage,
+          operation = if (activeLanguage == AppLanguage.KAZAKH) {
+            "Қызметкерді тексеру мүмкін болмады"
+          } else {
+            "Не удалось проверить сотрудника"
+          }
+        )
       } finally {
         isVerifyingEmployee = false
       }
@@ -1268,6 +1288,7 @@ fun KioskAppRoot(
               thermometerName = thermometerName,
               deviceToken = deviceToken,
               tokenInfo = tokenInfo,
+              tokenInfoError = tokenInfoError,
               isFetchingTokenInfo = isFetchingTokenInfo,
               kioskModeEnabled = kioskModeEnabled,
               onKioskModeToggle = onKioskModeToggle,
@@ -1614,15 +1635,26 @@ fun AuthorizationGate(
         Spacer(modifier = Modifier.height(12.dp))
 
         // Custom Amber error subtext under input
-        Box(modifier = Modifier.height(24.dp), contentAlignment = Alignment.Center) {
+        Box(
+          modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 30.dp, max = 64.dp)
+            .padding(horizontal = 8.dp),
+          contentAlignment = Alignment.Center
+        ) {
           if (errorText.isNotEmpty() && !isVerifying) {
             Text(
               text = errorText,
               color = AppleAmber,
-              style = MaterialTheme.typography.bodyMedium,
+              fontSize = 13.sp,
+              lineHeight = 16.sp,
               fontWeight = FontWeight.Medium,
-              letterSpacing = 0.5.sp,
-              modifier = Modifier.testTag("pin_error_subtext")
+              textAlign = TextAlign.Center,
+              maxLines = 3,
+              overflow = TextOverflow.Ellipsis,
+              modifier = Modifier
+                .fillMaxWidth()
+                .testTag("pin_error_subtext")
             )
           }
         }
@@ -4603,10 +4635,12 @@ fun RegistrationScreen(
       allBranches = b
       positions = p
     } catch (e: Exception) {
-      referenceError = if (lang == AppLanguage.KAZAKH)
-        "Анықтамалықтарды жүктеу мүмкін болмады: ${e.message}"
-      else
-        "Не удалось загрузить справочники: ${e.message}"
+      val operation = if (lang == AppLanguage.KAZAKH) {
+        "Анықтамалықтарды жүктеу мүмкін болмады"
+      } else {
+        "Не удалось загрузить справочники"
+      }
+      referenceError = ApiErrorText.fromThrowable(e, lang, operation)
     } finally {
       isLoadingReference = false
     }
@@ -5045,15 +5079,20 @@ fun RegistrationScreen(
                       showSuccessDialog = true
                     } else {
                       val errBody = response.errorBody()?.string() ?: ""
-                      errorMessage = if (errBody.trimStart().startsWith("<")) {
-                        // Сервер вернул HTML (напр. 404-страницу), а не JSON — не показываем сырую разметку
-                        if (lang == AppLanguage.KAZAKH) "Сервер қатесі (${response.code()})" else "Ошибка сервера (${response.code()})"
+                      val operation = if (lang == AppLanguage.KAZAKH) {
+                        "Қызметкерді тіркеу мүмкін болмады"
                       } else {
-                        "API Error ${response.code()}: $errBody"
+                        "Не удалось зарегистрировать сотрудника"
                       }
+                      errorMessage = ApiErrorText.fromHttp(response.code(), errBody, lang, operation)
                     }
                   } catch (e: Exception) {
-                    errorMessage = if (lang == AppLanguage.KAZAKH) "Желі қатесі: ${e.message}" else "Network Error: ${e.message}"
+                    val operation = if (lang == AppLanguage.KAZAKH) {
+                      "Қызметкерді тіркеу мүмкін болмады"
+                    } else {
+                      "Не удалось зарегистрировать сотрудника"
+                    }
+                    errorMessage = ApiErrorText.fromThrowable(e, lang, operation)
                   } finally {
                     isLoading = false
                   }
@@ -5458,6 +5497,7 @@ fun SettingsScreen(
   thermometerName: String,
   deviceToken: String,
   tokenInfo: TokenInfoResponse?,
+  tokenInfoError: String,
   isFetchingTokenInfo: Boolean,
   kioskModeEnabled: Boolean,
   onKioskModeToggle: (Boolean) -> Unit,
@@ -5887,7 +5927,13 @@ fun SettingsScreen(
             ) {
               Icon(imageVector = Icons.Default.CloudOff, contentDescription = null, tint = AppleRed)
               Text(
-                text = if (activeLanguage == AppLanguage.KAZAKH) "Токен жарамсыз немесе желі қатесі" else "Невалидный токен или ошибка сети",
+                text = tokenInfoError.ifBlank {
+                  if (activeLanguage == AppLanguage.KAZAKH) {
+                    "Токенді тексеру мүмкін болмады"
+                  } else {
+                    "Не удалось проверить токен"
+                  }
+                },
                 color = AppleRed,
                 fontWeight = FontWeight.Bold,
                 fontSize = 14.sp

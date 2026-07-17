@@ -2643,7 +2643,6 @@ fun Step2BloodPressure(
   val lang = LocalAppLanguage.current
   val drawMutedColor = AppleMutedGrey
   var isCapturing by remember { mutableStateOf(false) }
-  var showOmronTransferDialog by remember { mutableStateOf(false) }
   var progressValue by remember { mutableStateOf(0f) }
   
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -2983,9 +2982,7 @@ fun Step2BloodPressure(
       }
     } else {
       Button(
-        onClick = {
-          if (tonometerMode == "omron_ble") showOmronTransferDialog = true else isCapturing = true
-        },
+        onClick = { isCapturing = true },
         colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
@@ -3007,23 +3004,6 @@ fun Step2BloodPressure(
           fontSize = 14.sp
         )
       }
-    }
-
-    if (showOmronTransferDialog) {
-      AlertDialog(
-        onDismissRequest = { showOmronTransferDialog = false },
-        title = { Text("Передача данных Omron") },
-        text = { Text("Нажмите один раз кнопку Bluetooth на тонометре, дождитесь мигающей «o», затем нажмите «Считать».") },
-        confirmButton = {
-          TextButton(onClick = {
-            showOmronTransferDialog = false
-            isCapturing = true
-          }) { Text("Считать") }
-        },
-        dismissButton = {
-          TextButton(onClick = { showOmronTransferDialog = false }) { Text("Отмена") }
-        }
-      )
     }
   }
 }
@@ -5376,7 +5356,7 @@ object OmronBleManager {
               val descUuid = java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
               val descriptor = characteristic.getDescriptor(descUuid)
               if (descriptor != null) {
-                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
                 gatt.writeDescriptor(descriptor)
                 statusText.value = "Готов! Начните замер на Omron M4..."
               }

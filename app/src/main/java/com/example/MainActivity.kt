@@ -126,7 +126,7 @@ class Trans(val ru: String, val kk: String) {
 object AppText {
   val titleBranding = Trans("NEXIUM HEALTH", "NEXIUM HEALTH")
   val subtitleBranding = Trans("Medical Kiosk Authorization Gate", "Медициналық терминалға кіру шлюзі")
-  val authSubtitle = Trans("Авторизация медицинского терминала", "Медициналық терминалға авторлану")
+  val authSubtitle = Trans("Авторизация сотрудника", "Қызметкерді авторизациялау")
   val authPinPrompt = Trans("ВВЕДИТЕ ПИН-КОД ДЛЯ ВХОДА", "КІРУ ҮШІН ПИН-КОДТЫ ЕНГІЗІҢІЗ")
   val authHint = Trans("Подсказка: Введите '1111'", "Нұсқау: '1111' енгізіңіз")
   val employeeNotFound = Trans("Сотрудник не найден", "Қызметкер табылмады")

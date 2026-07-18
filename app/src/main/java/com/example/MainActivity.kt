@@ -940,7 +940,7 @@ fun KioskAppRoot(
               if (isSigned || (dopuskVal.isNotEmpty() && dopuskVal.lowercase() != "pending")) {
                 isSignedOrApproved = true
                 finalVerdictDopusk = dopuskVal
-                finalVerdictMedicName = body.nurseName ?: "Медсестра АСМО"
+                finalVerdictMedicName = body.nurseName ?: if (activeLanguage == AppLanguage.KAZAKH) "АМБ АБК медбикесі" else "Медсестра АПК АМК"
                 finalVerdictToken = examObj.id.takeLast(12).uppercase()
               }
             }
@@ -953,7 +953,7 @@ fun KioskAppRoot(
       // If we finished polling and still no sign, fallback to automated device decision-making cleanly
       if (!isSignedOrApproved) {
         finalVerdictDopusk = deviceDopuskStr
-        finalVerdictMedicName = "Служба автопроверки АСМО"
+        finalVerdictMedicName = if (activeLanguage == AppLanguage.KAZAKH) "АМБ АБК автотексеру қызметі" else "Служба автопроверки АПК АМК"
         finalVerdictToken = if (createdExamId != "mock-id") createdExamId.takeLast(12).uppercase() else "AUTO-VERIFIED"
       }
 
@@ -4003,7 +4003,7 @@ fun FinalClearanceVerdictScreen(
           horizontalArrangement = Arrangement.SpaceBetween
         ) {
           Text(AppText.certSignedBy.get(lang), color = AppleMutedGrey, fontSize = 11.sp)
-          Text(medicName.ifEmpty { "Дежурный медик АСМО" }, color = AppleLightGrey, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+          Text(medicName.ifEmpty { if (lang == AppLanguage.KAZAKH) "АМБ АБК кезекші медигі" else "Дежурный медик АПК АМК" }, color = AppleLightGrey, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -5440,14 +5440,15 @@ object OmronBleManager {
               // (см. rebondAndRetry). Сопрягаемся заново вместо голого повтора коннекта.
               android.util.Log.d("OmronBleManager", "Bond потерян (status=$status) — пересопряжение")
               rebondAndRetry(context, macAddress, onValueRead)
-            } else if (attempt == 0) {
-              // Первая попытка нередко срывается до установления связи (прибор ещё не готов) —
-              // повторяем один раз автоматически, без участия пользователя.
-              android.util.Log.d("OmronBleManager", "Первая попытка не удалась (status=$status) — повтор")
+            } else if (attempt < 2) {
+              // Первые попытки нередко срываются до установления связи — прибор ещё не
+              // готов (особенно если его только что включили в розетку и он не успел
+              // "прогреться"). Повторяем автоматически, без участия пользователя.
+              android.util.Log.d("OmronBleManager", "Попытка $attempt не удалась (status=$status) — повтор")
               statusText.value = "Не удалось подключиться, повтор..."
               Handler(Looper.getMainLooper()).postDelayed({
-                connect(context, macAddress, attempt = 1, rebonded = rebonded, onValueRead = onValueRead)
-              }, 500)
+                connect(context, macAddress, attempt = attempt + 1, rebonded = rebonded, onValueRead = onValueRead)
+              }, 800)
             } else {
               statusText.value = if (status == 19 || status == 22) "Тонометр отключился (Handshake failed)" else "Отключено ($status)"
             }

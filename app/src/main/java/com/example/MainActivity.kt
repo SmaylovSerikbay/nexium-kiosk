@@ -1625,10 +1625,10 @@ fun KioskAppRoot(
                     fullName = resp.fullName ?: "Employee ID ${resp.employeeId}",
                     organization = resp.getEffectiveOrganization(),
                     iin = "",
-                    department = resp.getEffectivePosition(),
+                    department = resp.getEffectivePosition(activeLanguage == AppLanguage.KAZAKH),
                     branch = resp.getEffectiveBranch(),
                     photoUrl = resp.getEffectivePhotoUrl(),
-                    position = resp.getEffectivePosition()
+                    position = resp.getEffectivePosition(activeLanguage == AppLanguage.KAZAKH)
                   )
                   currentScreen = KioskScreen.DASHBOARD
                 },
@@ -4893,7 +4893,7 @@ fun ConfirmationScreen(
               InfoTableRow(label = AppText.confirmBranch.get(lang), value = branch)
             }
             
-            val pos = response.getEffectivePosition()
+            val pos = response.getEffectivePosition(lang == AppLanguage.KAZAKH)
             if (pos.isNotEmpty()) {
               InfoTableRow(label = AppText.confirmDept.get(lang), value = pos)
             }

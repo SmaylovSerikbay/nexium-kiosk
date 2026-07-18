@@ -38,6 +38,7 @@ data class VerifyEmployeeResponse(
     // Position / Title mapping variants
     @Json(name = "position_name") val positionName: String? = null,
     @Json(name = "position") val position: String? = null,
+    @Json(name = "position_kk") val positionKk: String? = null,
     @Json(name = "job_title") val jobTitle: String? = null,
     @Json(name = "role") val role: String? = null,
     
@@ -70,8 +71,9 @@ data class VerifyEmployeeResponse(
         return organizationName ?: organization ?: companyName ?: company ?: ""
     }
     
-    // Helper to get the position/role safely
-    fun getEffectivePosition(): String {
+    // Helper to get the position/role safely; prefers the Kazakh translation when kazakh=true
+    fun getEffectivePosition(kazakh: Boolean = false): String {
+        if (kazakh && !positionKk.isNullOrBlank()) return positionKk
         return positionName ?: position ?: jobTitle ?: role ?: ""
     }
     

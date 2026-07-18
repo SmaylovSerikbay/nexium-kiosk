@@ -130,7 +130,7 @@ object AppText {
   val secureConn = Trans("БЕЗОПАСНОЕ СОЕДИНЕНИЕ // 128-БИТ", "ҚАУІПСІЗ ҚОСЫЛЫМ // 128-БИТ")
   val terminalVersion = Trans("NEXIUM HEALTH • ТЕРМИНАЛ v2.5", "NEXIUM HEALTH • ТЕРМИНАЛ v2.5")
   val physicianId = Trans("ID ВРАЧА: DR-9942", "ДӘРІГЕР ID: DR-9942")
-  val encryptedTransfer = Trans("ЗАШИФРОВАННАЯ ПЕРЕДАЧА АКТИВНА", "ШИФРЛЕНГЕН БЕРУ БЕЛСЕНДІ")
+  val encryptedTransfer = Trans("ЗАШИФРОВАННАЯ ПЕРЕДАЧА АКТИВНА", "ШИФРЛЕНГЕН БЕРІЛІМ БЕЛСЕНДІ")
   
   val bpTitle = Trans("Артериальное давление", "Қан қысымы")
   val hrTitle = Trans("Частота пульса", "Жүрек соғу жиілігі")
@@ -150,10 +150,10 @@ object AppText {
   val awaitQuestionnaire = Trans("Ожидание заполнения анкеты...", "Анкетаны толтыру күтілуде...")
   val analysisPending = Trans("Анализ ожидает выполнения", "Талдау орындалу күтілуде")
 
-  val stepAnamnesis = Trans("АНАМНЕЗ", "АНАМНЕЗ СЫНАҒЫ")
+  val stepAnamnesis = Trans("АНАМНЕЗ", "АНАМНЕЗ")
   val stepBp = Trans("ДАВЛЕНИЕ И ПУЛЬС", "ҚАН ҚЫСЫМЫ МЕН ПУЛЬС")
   val stepBreath = Trans("ДЫХАТЕЛЬНЫЙ ТЕСТ", "ТЫНЫС АЛУ СЫНАҒЫ")
-  val stepTemp = Trans("ТЕМПЕРАТУРНЫЙ СКРИНИНГ", "ТЕМПЕРАТУРАНЫ СҚАНЕРЛЕУ")
+  val stepTemp = Trans("ТЕМПЕРАТУРНЫЙ СКРИНИНГ", "ТЕМПЕРАТУРАНЫ СКАНЕРЛЕУ")
   val stepVerif = Trans("ПРОВЕРКА ЗАКЛЮЧЕНИЯ", "ҚОРЫТЫНДЫНЫ ТЕКСЕРУ")
 
   val complaintsPrompt = Trans("Есть ли у вас жалобы на здоровье сегодня?", "Бүгін денсаулығыңызға шағымдарыңыз бар ма?")
@@ -181,7 +181,7 @@ object AppText {
   )
   val breathExhalating = Trans("Давление выдоха зафиксировано. Дышите ровно...", "Дем шығару қысымы қабылданды. Бірқалыпты дем алыңыз...")
   val breathAnalyzing = Trans("Анализ состава воздуха...", "Ауа құрамын талдау...")
-  val breathButtonScan = Trans("Начать спирометрический забор", "Спирометр сынамасын бастау")
+  val breathButtonScan = Trans("Начать спирометрический забор", "Спирометрлік сынама алуды бастау")
 
   val tempPrompt = Trans("Направьте лоб на бесконтактный оптический термометр", "Маңдайыңызды контактісіз оптикалық датчикке жақындатыңыз")
   val tempDetail = Trans(
@@ -205,13 +205,13 @@ object AppText {
   val verifRowTemp = Trans("Термальный скрининг core", "Термиялық оптикалық бақылау")
   val verifCompleted = Trans("Завершено", "Аяқталды")
   val verifCalibrated = Trans("Откалибровано", "Калибрленді")
-  val verifVerifiedNormal = Trans("В норме", "Расталды")
+  val verifVerifiedNormal = Trans("В норме", "Қалыпты")
   val verifButtonSubmit = Trans("Подписать и отправить досье", "Құжаттамаға қол қою және жіберу")
 
   val awaitingDecision = Trans("Ожидание медицинского заключения...", "Медициналық шешімді күту...")
   val awaitingDesc = Trans(
     "Ваши диагностические данные заблокированы и проверяются сертифицированным дежурным врачом для подтверждения телеметрической подписи соответствия.",
-    "Сіздің диагностикалық деректеріңіз бұғатталады және телеметрия қолтаңбасының талаптарына сәйкестігін бақылау үшін Nexium Health сертификатталған дәрігерімен қауіпсіз тексеріледі."
+    "Сіздің диагностикалық деректеріңіз бұғатталды және телеметрия қолтаңбасының талаптарына сәйкестігін бақылау үшін Nexium Health сертификатталған дәрігерімен қауіпсіз тексеріледі."
   )
 
   val fitForDuty = Trans("ДОПУЩЕН К РАБОЧЕЙ СМЕНЕ", "ЖҰМЫС АУЫСЫМЫНА РҰҚСАТ ЕТІЛДІ")
@@ -221,13 +221,13 @@ object AppText {
   val profileName = Trans("Д-р Александр Стерлинг", "Др. Александр Стерлинг")
   val profileDept = Trans("Департамент когнитивного усиления", "Когнитивті күшейту бөлімі")
   val complaintsYes = Trans("Выявлены симптомы", "Симптомдар анықталды")
-  val complaintsNone = Trans("Жалоб нет // Здоров", "Шағымдар жоқ")
+  val complaintsNone = Trans("Жалоб нет // Здоров", "Шағымдар жоқ // Дені сау")
   
   val stepBadge = Trans("ШАГ", "ҚАДАМ")
-  val step1BadgeTitle = Trans("АНАМНЕЗ", "АНАМНЕЗ СЫНАҒЫ")
+  val step1BadgeTitle = Trans("АНАМНЕЗ", "АНАМНЕЗ")
   val step2BadgeTitle = Trans("АД И ПУЛЬС", "ҚАН ҚЫСЫМЫ МЕН ПУЛЬС")
   val step3BadgeTitle = Trans("ТЕСТ ДЫХАНИЯ", "ТЫНЫС АЛУ СЫНАҒЫ")
-  val step4BadgeTitle = Trans("СКАНИРОВАНИЕ ТЕМПЕРАТУРЫ", "ТЕМПЕРАТУРАНЫ СҚАНЕРЛЕУ")
+  val step4BadgeTitle = Trans("СКАНИРОВАНИЕ ТЕМПЕРАТУРЫ", "ТЕМПЕРАТУРАНЫ СКАНЕРЛЕУ")
   
   val certSigneeId = Trans("ID подписанта", "Қол қоюшы ID-і")
   val certSignedBy = Trans("Подписано врачом", "Қол қойған дәрігер")
@@ -237,14 +237,14 @@ object AppText {
   val certApproved = Trans("ОДОБРЕН", "МАҚҰЛДАНДЫ")
 
   val authIdPrompt = Trans("ВВЕДИТЕ ID СОТРУДНИКА ДЛЯ ВХОДА", "КІРУ ҮШІН ҚЫЗМЕТКЕР ID-ін ЕНГІЗІҢІЗ")
-  val authIdHint = Trans("Введите ваш ID сотрудника на сайте", "Сайттағы қызметкер қызметтік ID-ін енгізіңіз")
-  val verifyingId = Trans("Проверка ID сотрудника в базе данных...", "Базада қызметкерді белсенді тексеру...")
+  val authIdHint = Trans("Введите ваш ID сотрудника на сайте", "Қызметкердің сайттағы ID-ін енгізіңіз")
+  val verifyingId = Trans("Проверка ID сотрудника в базе данных...", "Қызметкер ID-і дерекқордан тексерілуде...")
   val confirmTitle = Trans("Подтверждение личности", "Жеке басын растау")
   val confirmIsThisYou = Trans("Это вы?", "Бұл сіз бе?")
   val confirmFullName = Trans("ФИО:", "Т.А.Ә.:")
   val confirmId = Trans("ID сотрудника:", "Қызметкер ID-і:")
   val confirmOrg = Trans("Организация:", "Ұйым:")
-  val confirmBranch = Trans("Филиал:", "Финалы:")
+  val confirmBranch = Trans("Филиал:", "Филиал:")
   val confirmDept = Trans("Должность:", "Лауазымы:")
   val yesItsMe = Trans("ДА, ЭТО Я", "ИӘ, БҰЛ МЕН")
   val noNotMe = Trans("НЕТ, НЕ Я", "ЖОҚ, МЕН ЕМЕС")
@@ -3092,7 +3092,7 @@ fun AwaitingNurseDecisionScreen(onRestart: () -> Unit) {
       Spacer(modifier = Modifier.height(24.dp))
 
       Text(
-        text = if (lang == AppLanguage.KAZAKH) "МЕДБИКЕ ШЕШІМ ҚАБЫЛДАМАДЫ" else "МЕДСЕСТРА ЕЩЁ НЕ ПРИНЯЛА РЕШЕНИЕ",
+        text = if (lang == AppLanguage.KAZAKH) "МЕДБИКЕ ӘЛІ ШЕШІМ ҚАБЫЛДАҒАН ЖОҚ" else "МЕДСЕСТРА ЕЩЁ НЕ ПРИНЯЛА РЕШЕНИЕ",
         color = AppleAmber,
         fontSize = 20.sp,
         fontWeight = FontWeight.Bold,
@@ -3484,7 +3484,7 @@ fun Step2BloodPressure(
             text = if (isCapturing) {
               if (lang == AppLanguage.KAZAKH) "Тонометр өлшеген қысым деректерін күтуде..." else "Ожидание данных измерения с тонометра..."
             } else {
-              if (lang == AppLanguage.KAZAKH) "Тонометрдің қосылуын күтіңіз немесе 'Қосу' басыңыз" else "Включите измерение на тонометре для автоматического считывания"
+              if (lang == AppLanguage.KAZAKH) "Автоматты оқу үшін тонометрде өлшеуді қосыңыз" else "Включите измерение на тонометре для автоматического считывания"
             },
             color = AppleMutedGrey,
             fontSize = 12.sp,
@@ -3791,7 +3791,7 @@ fun Step3Breathalyzer(
           Text(
             text = when {
               dingoMeasuring.value -> dingoStatus.value
-              dingoConnected.value -> if (lang == AppLanguage.KAZAKH) "Нажмите 'Бастау' — дуйте в мундштук" else "Нажмите кнопку ниже и дуйте в мундштук"
+              dingoConnected.value -> if (lang == AppLanguage.KAZAKH) "'Бастау' батырмасын басып, түтікке үрлеңіз" else "Нажмите кнопку ниже и дуйте в мундштук"
               DingoSerialManager.isDeviceAvailable(context) -> if (lang == AppLanguage.KAZAKH) "Құрылғы табылды. Іске қосу үшін батырманы басыңыз" else "Устройство найдено. Нажмите кнопку — Android запросит разрешение"
               else -> if (lang == AppLanguage.KAZAKH) "USB кабелін қосыңыз (Dingo E-200)" else "Подключите USB кабель (Dingo E-200)"
             },
@@ -4595,7 +4595,7 @@ fun FinalClearanceVerdictScreen(
           horizontalArrangement = Arrangement.SpaceBetween
         ) {
           Text(AppText.certSignedBy.get(lang), color = AppleMutedGrey, fontSize = 11.sp)
-          Text(medicName.ifEmpty { if (lang == AppLanguage.KAZAKH) "АМБ АБК кезекші медигі" else "Дежурный медик АПК АМК" }, color = AppleLightGrey, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+          Text(medicName.ifEmpty { if (lang == AppLanguage.KAZAKH) "АМБ АБК кезекші медбикесі" else "Дежурный медик АПК АМК" }, color = AppleLightGrey, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
         Row(
           modifier = Modifier.fillMaxWidth(),
@@ -5093,8 +5093,8 @@ fun getDeterministicPos(name: String?, lang: AppLanguage): String {
   val hashCode = clean.hashCode()
   val positions = listOf(
     Trans("Старший машинист локомотива", "Аға локомотив машинисі"),
-    Trans("Старший диспетчер", "Аға жүргізуші"),
-    Trans("Инспектор по безопасности труда", "Техникалық инспектор")
+    Trans("Старший диспетчер", "Аға диспетчер"),
+    Trans("Инспектор по безопасности труда", "Еңбек қауіпсіздігі жөніндегі инспектор")
   )
   val index = kotlin.math.abs(hashCode) % positions.size
   return positions[index].get(lang)
@@ -6537,7 +6537,7 @@ fun SettingsScreen(
         }
         Column {
           Text(
-            text = if (activeLanguage == AppLanguage.KAZAKH) "БАПТАУЛАР" else "НАСТРОЙКИ СИСТЕМЫ",
+            text = if (activeLanguage == AppLanguage.KAZAKH) "ЖҮЙЕ БАПТАУЛАРЫ" else "НАСТРОЙКИ СИСТЕМЫ",
             color = AppleLightGrey,
             fontSize = 22.sp,
             fontWeight = FontWeight.Bold,
@@ -6632,7 +6632,7 @@ fun SettingsScreen(
               fontSize = 16.sp
             )
             Text(
-              text = if (activeLanguage == AppLanguage.KAZAKH) "Экранды бұғаттау және системдік батырмаларды өшіру" else "Блокировка экрана и системных кнопок навигации",
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Экранды бұғаттау және жүйелік батырмаларды өшіру" else "Блокировка экрана и системных кнопок навигации",
               color = AppleMutedGrey,
               fontSize = 12.sp
             )
@@ -6740,7 +6740,7 @@ fun SettingsScreen(
         
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(
-            text = if (activeLanguage == AppLanguage.KAZAKH) "API құрылғысының токені" else "API Токен устройства (X-Device-Token)",
+            text = if (activeLanguage == AppLanguage.KAZAKH) "API құрылғысының токені (X-Device-Token)" else "API Токен устройства (X-Device-Token)",
             color = AppleLightGrey,
             fontWeight = FontWeight.Bold,
             fontSize = 16.sp
@@ -6760,14 +6760,14 @@ fun SettingsScreen(
               Icon(imageVector = Icons.Default.CloudDone, contentDescription = null, tint = AppleGreen)
               Column {
                 Text(
-                  text = "${if (activeLanguage == AppLanguage.KAZAKH) "Құрылғы" else "Имя токена"}: ${tokenInfo.name}",
+                  text = "${if (activeLanguage == AppLanguage.KAZAKH) "Токен атауы" else "Имя токена"}: ${tokenInfo.name}",
                   color = AppleLightGrey,
                   fontWeight = FontWeight.Bold,
                   fontSize = 14.sp
                 )
                 if (!tokenInfo.deviceName.isNullOrEmpty()) {
                   Text(
-                    text = "${if (activeLanguage == AppLanguage.KAZAKH) "Аппарат" else "Привязан к аппарату"}: ${tokenInfo.deviceName}",
+                    text = "${if (activeLanguage == AppLanguage.KAZAKH) "Аппаратқа тіркелген" else "Привязан к аппарату"}: ${tokenInfo.deviceName}",
                     color = AppleMutedGrey,
                     fontSize = 12.sp
                   )
@@ -7176,7 +7176,7 @@ fun SettingsScreen(
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
               Text(
-                text = if (activeLanguage == AppLanguage.KAZAKH) "Microlife NC-150 BT табу үшін сканерлеңіз" else "Отсканируйте BLE для привязки Microlife NC-150 BT",
+                text = if (activeLanguage == AppLanguage.KAZAKH) "Microlife NC-150 BT құрылғысын жұптау үшін сканерлеңіз" else "Отсканируйте BLE для привязки Microlife NC-150 BT",
                 color = AppleMutedGrey, fontSize = 12.sp
               )
               Button(
@@ -7390,7 +7390,7 @@ fun SettingsScreen(
                     text = if (isDeviceActive) {
                       if (activeLanguage == AppLanguage.KAZAKH) "Таңдалды" else "ВЫБРАН"
                     } else {
-                      if (activeLanguage == AppLanguage.KAZAKH) "Қосу" else "СОПРЯЧЬ"
+                      if (activeLanguage == AppLanguage.KAZAKH) "ЖҰПТАУ" else "СОПРЯЧЬ"
                     },
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold
@@ -7456,7 +7456,7 @@ fun SettingsScreen(
         ) {
           Text(
             text = if (activeLanguage == AppLanguage.KAZAKH) {
-              "Мақсатты өлшеу саласын таңдаңыз:\n\nАтауы: ${dev.name}\nМекенжай: ${dev.address}"
+              "Осы құрылғы үшін өлшеу санатын таңдаңыз:\n\nАтауы: ${dev.name}\nМекенжай: ${dev.address}"
             } else {
               "Выберите целевую категорию измерения для этого устройства:\n\nИмя: ${dev.name}\nАдрес: ${dev.address}"
             },
@@ -7515,7 +7515,7 @@ fun SettingsScreen(
             ) {
               Icon(imageVector = Icons.Default.Air, contentDescription = null, modifier = Modifier.size(18.dp))
               Text(
-                text = if (activeLanguage == AppLanguage.KAZAKH) "Алкотестер" else "Алкотестер (Пары алкоголя)",
+                text = if (activeLanguage == AppLanguage.KAZAKH) "Алкотестер (Алкоголь буы)" else "Алкотестер (Пары алкоголя)",
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White

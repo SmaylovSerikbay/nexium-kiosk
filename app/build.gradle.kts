@@ -14,8 +14,8 @@ android {
     applicationId = "com.aistudio.nexiumhealth.qptwyx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 40
-    versionName = "1.40"
+    versionCode = 41
+    versionName = "1.41"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -55,6 +55,12 @@ android {
     buildConfig = true
   }
   testOptions { unitTests { isIncludeAndroidResources = true } }
+}
+
+kotlin {
+  compilerOptions {
+    freeCompilerArgs.add("-Xannotation-default-target=param-property")
+  }
 }
 
 // Configure the Secrets Gradle Plugin to use .env and .env.example files

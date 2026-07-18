@@ -211,7 +211,8 @@ object MicrolifeManager {
             statusText.value = "Готов — нажмите START на термометре"
         }
 
-        override fun onResponseUploadMeasureData(data: ThermoMeasureData) {
+        override fun onResponseUploadMeasureData(thermoMeasureData: ThermoMeasureData) {
+            val data = thermoMeasureData
             val temp = data.measureTemperature.toDouble()
             Log.d(TAG, ">>> MeasureData: temp=$temp flagErr=${data.flagErr} mode=${data.mode} workMode=$lastWorkMode")
             val memoryMode = thermoProtocol?.WORK_MODE_MEMORY
@@ -233,13 +234,13 @@ object MicrolifeManager {
             }
         }
 
-        override fun onResponseUploadCalibrate(params: List<CalibrateParameter>) {
-            Log.d(TAG, "Calibrate params: ${params.size}")
+        override fun onResponseUploadCalibrate(calibrateParameters: List<CalibrateParameter>) {
+            Log.d(TAG, "Calibrate params: ${calibrateParameters.size}")
         }
 
-        override fun onWriteCommand(cmd: ByteArray) {
+        override fun onWriteCommand(byteArray: ByteArray) {
             // SDK требует записать эту команду обратно на устройство
-            Log.d(TAG, "onWriteCommand: ${cmd.toHex()} (${cmd.size} bytes)")
+            Log.d(TAG, "onWriteCommand: ${byteArray.toHex()} (${byteArray.size} bytes)")
             // Используем Dispatchers.IO чтобы не блокировать Main thread
             // и выполняем немедленно без delay
             scope.launch(Dispatchers.IO) {
@@ -249,8 +250,8 @@ object MicrolifeManager {
                         Log.e(TAG, "writeCommand: btManager is null!")
                         return@launch
                     }
-                    mgr.writeCommand(cmd)
-                    Log.d(TAG, "writeCommand OK: ${cmd.toHex()}")
+                    mgr.writeCommand(byteArray)
+                    Log.d(TAG, "writeCommand OK: ${byteArray.toHex()}")
                 } catch (e: Exception) {
                     Log.e(TAG, "writeCommand FAILED: ${e.message}", e)
                 }
@@ -282,7 +283,8 @@ object MicrolifeManager {
             Log.d(TAG, "  → Устройство принято, SDK подключается…")
         }
 
-        override fun onConnectionState(state: ConnectState) {
+        override fun onConnectionState(connectState: ConnectState) {
+            val state = connectState
             Log.d(TAG, "onConnectionState: $state")
             when (state) {
                 ConnectState.Connected   -> {
@@ -322,9 +324,9 @@ object MicrolifeManager {
             }
         }
 
-        override fun onConnectionState(state: ConnectState, errorCode: Int) {
-            Log.d(TAG, "onConnectionState: $state code=$errorCode")
-            onConnectionState(state)
+        override fun onConnectionState(connectState: ConnectState, state: Int) {
+            Log.d(TAG, "onConnectionState: $connectState code=$state")
+            onConnectionState(connectState)
         }
 
         /**
@@ -353,10 +355,10 @@ object MicrolifeManager {
             }
         }
 
-        override fun onResponseSWRevision(sw: String) { Log.d(TAG, "SW=$sw") }
-        override fun onResponseFWRevision(fw: String) { Log.d(TAG, "FW=$fw") }
-        override fun onResponseHWRevision(hw: String) { Log.d(TAG, "HW=$hw") }
-        override fun onBtStateChanged(enabled: Boolean) { Log.d(TAG, "BT enabled=$enabled") }
+        override fun onResponseSWRevision(swRevision: String) { Log.d(TAG, "SW=$swRevision") }
+        override fun onResponseFWRevision(fwRevision: String) { Log.d(TAG, "FW=$fwRevision") }
+        override fun onResponseHWRevision(hwRevision: String) { Log.d(TAG, "HW=$hwRevision") }
+        override fun onBtStateChanged(isEnable: Boolean) { Log.d(TAG, "BT enabled=$isEnable") }
         override fun onResponseFailedMessage(msg: String) {
             Log.w(TAG, "FailedMessage: $msg")
             statusText.value = "⚠ $msg"

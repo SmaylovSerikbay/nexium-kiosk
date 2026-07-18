@@ -57,6 +57,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -111,6 +112,12 @@ enum class AppLanguage {
 }
 
 val LocalAppLanguage = staticCompositionLocalOf { AppLanguage.RUSSIAN }
+
+// AutoMirrored variants unavailable in the current material-icons-extended version.
+@Suppress("DEPRECATION")
+val LegacyArrowBackIcon = Icons.Filled.ArrowBack
+@Suppress("DEPRECATION")
+val LegacyBluetoothSearchingIcon = Icons.Filled.BluetoothSearching
 
 class Trans(val ru: String, val kk: String) {
   fun get(lang: AppLanguage): String = if (lang == AppLanguage.KAZAKH) kk else ru
@@ -617,20 +624,10 @@ class MainActivity : ComponentActivity() {
     val controller = WindowCompat.getInsetsController(window, window.decorView)
 
     if (enabled) {
-      window.decorView.systemUiVisibility = (
-          View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-          or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-          or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-          or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-          or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-          or View.SYSTEM_UI_FLAG_FULLSCREEN
-      )
       controller.hide(WindowInsetsCompat.Type.systemBars())
       controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
     } else {
-      window.decorView.systemUiVisibility = View.SYSTEM_UI_FLAG_LAYOUT_STABLE
       controller.show(WindowInsetsCompat.Type.systemBars())
-      window.clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
     }
   }
 }
@@ -3583,7 +3580,7 @@ fun Step2BloodPressure(
           .testTag("bp_simulation_trigger")
       ) {
         Icon(
-          imageVector = if (tonometerMode == "omron_ble") Icons.Default.BluetoothSearching else Icons.Default.PlayArrow,
+          imageVector = if (tonometerMode == "omron_ble") LegacyBluetoothSearchingIcon else Icons.Default.PlayArrow,
           contentDescription = "Simulate",
           tint = Color.White,
           modifier = Modifier.size(18.dp)
@@ -5385,7 +5382,7 @@ fun RegistrationScreen(
           .background(if (isDark) AppleCharcoal else Color(0xFFF2F2F7), CircleShape)
           .testTag("reg_back_button")
       ) {
-        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppleBlue)
+        Icon(imageVector = LegacyArrowBackIcon, contentDescription = "Back", tint = AppleBlue)
       }
       Text(
         text = Trans("РЕГИСТРАЦИЯ НОВОГО СОТРУДНИКА", "ЖАҢА ҚЫЗМЕТКЕРДІ ТІРКЕУ").get(lang),
@@ -6089,7 +6086,7 @@ object OmronBleManager {
     val receiver = object : android.content.BroadcastReceiver() {
       override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
         if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
-        val changedDevice = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+        val changedDevice = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
         if (changedDevice?.address != macAddress) return
         val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
         if (bondState == BluetoothDevice.BOND_BONDED) {
@@ -6231,8 +6228,14 @@ object OmronBleManager {
           gatt.setCharacteristicNotification(characteristic, true)
           val descriptor = characteristic.getDescriptor(CCCD_UUID)
           if (descriptor != null) {
-            descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-            gatt.writeDescriptor(descriptor)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+              gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_INDICATION_VALUE)
+            } else {
+              @Suppress("DEPRECATION")
+              descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+              @Suppress("DEPRECATION")
+              gatt.writeDescriptor(descriptor)
+            }
             android.util.Log.d("OmronBleManager", "Enabling indications for 0x2A35")
           }
         }
@@ -6248,6 +6251,7 @@ object OmronBleManager {
           }
         }
 
+        @Suppress("DEPRECATION") // required overload for API < 33; new value-param overload delegates to this one
         override fun onCharacteristicChanged(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?) {
           val value = characteristic?.value ?: return
           if (value.size >= 7) {
@@ -6530,7 +6534,7 @@ fun SettingsScreen(
             .testTag("settings_back_button")
         ) {
           Icon(
-            imageVector = Icons.Default.ArrowBack,
+            imageVector = LegacyArrowBackIcon,
             contentDescription = "Back",
             tint = AppleBlue
           )
@@ -6737,7 +6741,11 @@ fun SettingsScreen(
     ) {
       Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         var tokenInput by remember { mutableStateOf("") }
-        
+        var isEditingToken by remember { mutableStateOf(deviceToken.isEmpty()) }
+        var isValidatingNewToken by remember { mutableStateOf(false) }
+        var newTokenError by remember { mutableStateOf("") }
+        val scope = rememberCoroutineScope()
+
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
           Text(
             text = if (activeLanguage == AppLanguage.KAZAKH) "API құрылғысының токені (X-Device-Token)" else "API Токен устройства (X-Device-Token)",
@@ -6807,45 +6815,89 @@ fun SettingsScreen(
 
           Spacer(modifier = Modifier.height(8.dp))
 
-          Text(
-            text = if (activeLanguage == AppLanguage.KAZAKH) "Жаңа токенді енгізу" else "Ввести новый токен",
-            color = AppleMutedGrey,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Medium
-          )
-
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-          ) {
-            OutlinedTextField(
-              value = tokenInput,
-              onValueChange = { tokenInput = it },
-              placeholder = { Text(if (deviceToken.isNotEmpty()) "••••••••••••••••" else "nxt_...") },
-              modifier = Modifier.weight(1f),
-              colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = AppleBlue,
-                unfocusedBorderColor = AppleBorderColor,
-                focusedTextColor = AppleLightGrey,
-                unfocusedTextColor = AppleLightGrey
-              ),
-              singleLine = true
-            )
-            
-            Button(
-              onClick = { 
-                if (tokenInput.isNotBlank()) {
-                  onSaveToken(tokenInput)
-                  tokenInput = "" 
-                }
-              },
-              enabled = tokenInput.isNotBlank(),
-              colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
-              shape = RoundedCornerShape(10.dp),
-              modifier = Modifier.height(54.dp)
+          if (!isEditingToken) {
+            OutlinedButton(
+              onClick = { isEditingToken = true; newTokenError = "" },
+              modifier = Modifier.fillMaxWidth(),
+              shape = RoundedCornerShape(10.dp)
             ) {
-              Text(if (activeLanguage == AppLanguage.KAZAKH) "Жаңарту" else "ОБНОВИТЬ")
+              Text(if (activeLanguage == AppLanguage.KAZAKH) "Токенді өзгерту" else "Изменить токен")
+            }
+          } else {
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Жаңа токенді енгізу" else "Ввести новый токен",
+              color = AppleMutedGrey,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Medium
+            )
+
+            Row(
+              modifier = Modifier.fillMaxWidth(),
+              horizontalArrangement = Arrangement.spacedBy(12.dp),
+              verticalAlignment = Alignment.CenterVertically
+            ) {
+              OutlinedTextField(
+                value = tokenInput,
+                onValueChange = { tokenInput = it; newTokenError = "" },
+                placeholder = { Text("nxt_...") },
+                modifier = Modifier.weight(1f),
+                colors = OutlinedTextFieldDefaults.colors(
+                  focusedBorderColor = AppleBlue,
+                  unfocusedBorderColor = AppleBorderColor,
+                  focusedTextColor = AppleLightGrey,
+                  unfocusedTextColor = AppleLightGrey
+                ),
+                singleLine = true,
+                enabled = !isValidatingNewToken
+              )
+
+              Button(
+                onClick = {
+                  val candidate = tokenInput
+                  if (candidate.isNotBlank()) {
+                    scope.launch {
+                      isValidatingNewToken = true
+                      newTokenError = ""
+                      try {
+                        val response = withContext(Dispatchers.IO) {
+                          NexApiClient.service.getCurrentTokenInfo(candidate)
+                        }
+                        if (response.isSuccessful) {
+                          onSaveToken(candidate)
+                          tokenInput = ""
+                          isEditingToken = deviceToken.isEmpty()
+                        } else {
+                          newTokenError = ApiErrorText.fromHttp(response.code(), response.errorBody()?.string(), activeLanguage)
+                        }
+                      } catch (e: Exception) {
+                        newTokenError = ApiErrorText.fromThrowable(e, activeLanguage)
+                      } finally {
+                        isValidatingNewToken = false
+                      }
+                    }
+                  }
+                },
+                enabled = tokenInput.isNotBlank() && !isValidatingNewToken,
+                colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier.height(54.dp)
+              ) {
+                Text(if (activeLanguage == AppLanguage.KAZAKH) "Жаңарту" else "ОБНОВИТЬ")
+              }
+            }
+
+            if (isValidatingNewToken) {
+              LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = AppleBlue)
+            }
+
+            if (newTokenError.isNotBlank()) {
+              Text(text = newTokenError, color = AppleRed, fontSize = 12.sp)
+            }
+
+            if (deviceToken.isNotEmpty()) {
+              TextButton(onClick = { isEditingToken = false; tokenInput = ""; newTokenError = "" }) {
+                Text(if (activeLanguage == AppLanguage.KAZAKH) "Бас тарту" else "Отмена")
+              }
             }
           }
         }

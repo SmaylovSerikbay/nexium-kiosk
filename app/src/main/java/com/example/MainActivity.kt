@@ -352,6 +352,7 @@ class MainActivity : ComponentActivity() {
     } else {
       KioskManager.disableKioskPolicies(this)
     }
+    KioskManager.grantCameraPermissionSilently(this)
 
     setContent {
       val context = androidx.compose.ui.platform.LocalContext.current

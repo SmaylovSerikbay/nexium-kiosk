@@ -86,6 +86,26 @@ object KioskManager {
         }
     }
 
+    // Выдаёт разрешение CAMERA без системного диалога — доступно только Device Owner.
+    // Нужно для фоновой записи видео осмотра (см. ExamVideoRecorder), чтобы сотрудник
+    // не видел запрос разрешения при первом входе в кабинет.
+    fun grantCameraPermissionSilently(context: Context) {
+        if (!isDeviceOwner(context)) return
+        val dpm = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+        val admin = KioskDeviceAdminReceiver.componentName(context)
+        try {
+            dpm.setPermissionGrantState(
+                admin,
+                context.packageName,
+                android.Manifest.permission.CAMERA,
+                DevicePolicyManager.PERMISSION_GRANT_STATE_GRANTED
+            )
+            Log.d(TAG, "CAMERA permission granted silently via device policy")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to silently grant CAMERA permission", e)
+        }
+    }
+
     // Снимает политики, которые мешают обслуживанию устройства вне киоск-режима.
     // Device Owner при этом остаётся назначенным, чтобы киоск можно было включить обратно
     // без factory reset и повторного dpm set-device-owner.

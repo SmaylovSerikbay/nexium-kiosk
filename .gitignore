@@ -27,4 +27,6 @@ my-upload-key.jks
 /app/release/
 
 # Temporary chat attachments
+# Temporary Gradle files
+/tmp/
 *.tmp

@@ -5270,24 +5270,120 @@ data class MockBluetoothDevice(
 
 object OmronBleManager {
   private var activeGatt: BluetoothGatt? = null
+  private var gattServer: BluetoothGattServer? = null
+  
   var isConnected = mutableStateOf(false)
   var statusText = mutableStateOf("Ожидание запуска...")
   var lastResult = mutableStateOf<Triple<Int, Int, Int>?>(null)
-  // Omron при подключении выгружает ВСЮ историю сохранённых замеров из памяти
-  // (десятки записей за доли секунды), а не только текущее живое измерение.
-  // Порядок прихода пакетов не гарантирует "последний = самый свежий", поэтому
-  // сравниваем по timestamp (год/месяц/день/час/мин/сек) внутри каждого пакета
-  // и запоминаем запись с максимальным (самым поздним) временем.
+
   private var bestTimestampValue: Long = -1L
-  // Реальный Omron M4 шлёт данные почти мгновенно, но сам физически не разрывает
-  // BLE-соединение ещё ~8 секунд после этого (проверено логами). Ждать его
-  // disconnect бессмысленно — как только пакеты перестают приходить, отдаём
-  // результат сами и отключаемся, не дожидаясь прибора.
   private val settleHandler = Handler(Looper.getMainLooper())
   private var settleRunnable: Runnable? = null
-  private const val SETTLE_DELAY_MS = 700L
+  private const val SETTLE_DELAY_MS = 1200L // Немного увеличили для стабильности многопакетной передачи
 
-  fun connect(context: Context, macAddress: String, onValueRead: (Int, Int, Int) -> Unit) {
+  private val CTS_SERVICE_UUID = java.util.UUID.fromString("00001805-0000-1000-8000-00805f9b34fb")
+  private val CURRENT_TIME_CHAR_UUID = java.util.UUID.fromString("00002a2b-0000-1000-8000-00805f9b34fb")
+
+  private val BP_SERVICE_UUID = java.util.UUID.fromString("00001810-0000-1000-8000-00805f9b34fb")
+  private val BP_MEAS_CHAR_UUID = java.util.UUID.fromString("00002a35-0000-1000-8000-00805f9b34fb")
+  private val BP_FEATURE_CHAR_UUID = java.util.UUID.fromString("00002a49-0000-1000-8000-00805f9b34fb")
+  private val CCCD_UUID = java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
+
+  private fun startGattServer(context: Context) {
+    if (gattServer != null) return
+    val bluetoothManager = context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
+    gattServer = bluetoothManager.openGattServer(context, object : BluetoothGattServerCallback() {
+      override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
+        android.util.Log.d("OmronBleManager", "Server connection state changed: $newState status: $status for ${device.address}")
+      }
+
+      override fun onServiceAdded(status: Int, service: BluetoothGattService) {
+        android.util.Log.d("OmronBleManager", "Server service added: ${service.uuid} status: $status")
+      }
+
+      override fun onCharacteristicReadRequest(
+        device: BluetoothDevice,
+        requestId: Int,
+        offset: Int,
+        characteristic: BluetoothGattCharacteristic
+      ) {
+        if (characteristic.uuid == CURRENT_TIME_CHAR_UUID) {
+          val timeBytes = getCurrentTimeBytes()
+          android.util.Log.d("OmronBleManager", "Time sync request (READ) from ${device.address}. Sending: ${timeBytes.joinToString(" "){ "%02X".format(it) }}")
+          gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, timeBytes)
+        } else {
+          gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_FAILURE, offset, null)
+        }
+      }
+    })
+
+    val ctsService = BluetoothGattService(CTS_SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
+    val timeChar = BluetoothGattCharacteristic(
+      CURRENT_TIME_CHAR_UUID,
+      BluetoothGattCharacteristic.PROPERTY_READ or BluetoothGattCharacteristic.PROPERTY_NOTIFY,
+      BluetoothGattCharacteristic.PERMISSION_READ
+    )
+    ctsService.addCharacteristic(timeChar)
+    gattServer?.addService(ctsService)
+    android.util.Log.d("OmronBleManager", "GATT Server opening...")
+  }
+
+  private fun getCurrentTimeBytes(): ByteArray {
+    val cal = java.util.Calendar.getInstance()
+    val bytes = ByteArray(10)
+    val year = cal.get(java.util.Calendar.YEAR)
+    bytes[0] = (year and 0xFF).toByte()
+    bytes[1] = (year shr 8 and 0xFF).toByte()
+    bytes[2] = (cal.get(java.util.Calendar.MONTH) + 1).toByte()
+    bytes[3] = cal.get(java.util.Calendar.DAY_OF_MONTH).toByte()
+    bytes[4] = cal.get(java.util.Calendar.HOUR_OF_DAY).toByte()
+    bytes[5] = cal.get(java.util.Calendar.MINUTE).toByte()
+    bytes[6] = cal.get(java.util.Calendar.SECOND).toByte()
+    // Day of week: BLE format 1=Monday...7=Sunday. Calendar: 1=Sunday, 2=Monday...
+    val dayOfWeek = cal.get(java.util.Calendar.DAY_OF_WEEK)
+    bytes[7] = if (dayOfWeek == java.util.Calendar.SUNDAY) 7 else (dayOfWeek - 1).toByte()
+    bytes[8] = 0 // fractions
+    bytes[9] = 1 // adjust reason: Manual time update
+    return bytes
+  }
+
+  private var bondReceiver: android.content.BroadcastReceiver? = null
+
+  // Omron хранит только один слот сопряжённого центрального устройства — если прибор
+  // успел сопрячься с чем-то ещё (например, с телефоном через Omron Connect), наш
+  // сохранённый на телефоне ключ шифрования перестаёт совпадать с тем, что помнит сам
+  // прибор. Android в этом случае сам стирает bond (encryption_change:key_missing).
+  // Вместо того чтобы просто показать ошибку и заставить лезть в настройки —
+  // пересопрягаем автоматически прямо из экрана осмотра.
+  private fun rebondAndRetry(context: Context, macAddress: String, onValueRead: (Int, Int, Int) -> Unit) {
+    val adapter = (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter ?: return
+    val device = adapter.getRemoteDevice(macAddress)
+    statusText.value = "Тонометр сопряжён с другим устройством. Пересопряжение — подтвердите системное окно Bluetooth."
+
+    bondReceiver?.let { context.applicationContext.unregisterReceiver(it) }
+    val receiver = object : android.content.BroadcastReceiver() {
+      override fun onReceive(ctx: Context?, intent: android.content.Intent?) {
+        if (intent?.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+        val changedDevice = intent.getParcelableExtra<BluetoothDevice>(BluetoothDevice.EXTRA_DEVICE)
+        if (changedDevice?.address != macAddress) return
+        val bondState = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, BluetoothDevice.BOND_NONE)
+        if (bondState == BluetoothDevice.BOND_BONDED) {
+          context.applicationContext.unregisterReceiver(this)
+          bondReceiver = null
+          connect(context, macAddress, attempt = 0, rebonded = true, onValueRead = onValueRead)
+        } else if (bondState == BluetoothDevice.BOND_NONE) {
+          context.applicationContext.unregisterReceiver(this)
+          bondReceiver = null
+          statusText.value = "Не удалось пересопрячь тонометр. Попробуйте вручную в настройках."
+        }
+      }
+    }
+    bondReceiver = receiver
+    context.applicationContext.registerReceiver(receiver, android.content.IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED))
+    device.createBond()
+  }
+
+  fun connect(context: Context, macAddress: String, attempt: Int = 0, rebonded: Boolean = false, onValueRead: (Int, Int, Int) -> Unit) {
     if (macAddress.isEmpty()) {
       statusText.value = "Ошибка: MAC-адрес пуст"
       return
@@ -5300,9 +5396,17 @@ object OmronBleManager {
     try {
       val device = adapter.getRemoteDevice(macAddress)
       if (device.bondState != BluetoothDevice.BOND_BONDED) {
-        statusText.value = "Тонометр не сопряжён. Нажмите «СОПРЯЧЬ» и подтвердите Bluetooth."
+        if (!rebonded) {
+          rebondAndRetry(context, macAddress, onValueRead)
+        } else {
+          statusText.value = "Тонометр не сопряжён. Нажмите «СОПРЯЧЬ» и подтвердите Bluetooth."
+        }
         return
       }
+
+      // Запускаем сервер времени ПЕРЕД подключением клиента
+      startGattServer(context)
+
       statusText.value = "Подключение к ${device.name ?: "Omron M4"}..."
       bestTimestampValue = -1L
       lastResult.value = null
@@ -5314,93 +5418,125 @@ object OmronBleManager {
 
       activeGatt = device.connectGatt(context, false, object : BluetoothGattCallback() {
         override fun onConnectionStateChange(gatt: BluetoothGatt?, status: Int, newState: Int) {
-          android.util.Log.d("OmronBleManager", "Connection state=$newState status=$status bond=${device.bondState}")
+          android.util.Log.d("OmronBleManager", "Client connection state=$newState status=$status bond=${device.bondState}")
           if (newState == BluetoothProfile.STATE_CONNECTED) {
-            statusText.value = "Соединение установлено. Поиск служб..."
-            gatt?.discoverServices()
+            statusText.value = "Установлено. Настройка..."
+            gatt?.requestMtu(512)
           } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
             isConnected.value = false
             settleRunnable?.let { settleHandler.removeCallbacks(it) }
             settleRunnable = null
-            // Omron физически отключается сам спустя много секунд после отправки
-            // данных — обычно результат уже доставлен settle-таймером раньше.
-            // Это просто подстраховка на случай, если он почему-то не сработал.
+            
             val result = lastResult.value
             if (result != null) {
-              android.util.Log.d("OmronBleManager", "Disconnected — последний результат: ${result.first}/${result.second} hr=${result.third}")
+              android.util.Log.d("OmronBleManager", "Disconnected — результат готов")
               statusText.value = "✓ ${result.first}/${result.second}, пульс ${result.third}"
               Handler(Looper.getMainLooper()).post {
                 onValueRead(result.first, result.second, result.third)
               }
-              lastResult.value = null // сбрасываем для следующего сеанса
-            } else if (device.bondState != BluetoothDevice.BOND_BONDED) {
-              statusText.value = "Тонометр потерял сопряжение. Нажмите «СОПРЯЧЬ» и подтвердите Bluetooth."
-            } else if (status == 19 || status == 22) {
-              statusText.value = "Тонометр отключился. Включите его, начните замер и повторите считывание."
+              lastResult.value = null
+            } else if (device.bondState != BluetoothDevice.BOND_BONDED && !rebonded) {
+              // Шифрование сорвалось из-за key_missing — Omron больше не помнит наш ключ
+              // (см. rebondAndRetry). Сопрягаемся заново вместо голого повтора коннекта.
+              android.util.Log.d("OmronBleManager", "Bond потерян (status=$status) — пересопряжение")
+              rebondAndRetry(context, macAddress, onValueRead)
+            } else if (attempt == 0) {
+              // Первая попытка нередко срывается до установления связи (прибор ещё не готов) —
+              // повторяем один раз автоматически, без участия пользователя.
+              android.util.Log.d("OmronBleManager", "Первая попытка не удалась (status=$status) — повтор")
+              statusText.value = "Не удалось подключиться, повтор..."
+              Handler(Looper.getMainLooper()).postDelayed({
+                connect(context, macAddress, attempt = 1, rebonded = rebonded, onValueRead = onValueRead)
+              }, 500)
             } else {
-              statusText.value = "Отключено"
+              statusText.value = if (status == 19 || status == 22) "Тонометр отключился (Handshake failed)" else "Отключено ($status)"
             }
           }
         }
 
+        override fun onMtuChanged(gatt: BluetoothGatt?, mtu: Int, status: Int) {
+          android.util.Log.d("OmronBleManager", "MTU changed to $mtu, status=$status")
+          gatt?.requestConnectionPriority(BluetoothGatt.CONNECTION_PRIORITY_HIGH)
+          Handler(Looper.getMainLooper()).postDelayed({
+            gatt?.discoverServices()
+          }, 800)
+        }
+
         override fun onServicesDiscovered(gatt: BluetoothGatt?, status: Int) {
           if (status == BluetoothGatt.GATT_SUCCESS) {
-            statusText.value = "Службы найдены. Подписка на измерения..."
-            val bpServiceUuid = java.util.UUID.fromString("00001810-0000-1000-8000-00805f9b34fb")
-            val bpCharUuid = java.util.UUID.fromString("00002a35-0000-1000-8000-00805f9b34fb")
-            
-            val service = gatt?.getService(bpServiceUuid)
-            val characteristic = service?.getCharacteristic(bpCharUuid)
-            if (characteristic != null) {
-              gatt.setCharacteristicNotification(characteristic, true)
-              val descUuid = java.util.UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
-              val descriptor = characteristic.getDescriptor(descUuid)
-              if (descriptor != null) {
-                descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
-                gatt.writeDescriptor(descriptor)
-                statusText.value = "Готов! Начните замер на Omron M4..."
+            android.util.Log.d("OmronBleManager", "Services discovered. Listing...")
+            gatt?.services?.forEach { s ->
+              android.util.Log.d("OmronBleManager", "  Service: ${s.uuid}")
+              s.characteristics.forEach { c ->
+                android.util.Log.d("OmronBleManager", "    Char: ${c.uuid} props=${c.properties}")
               }
+            }
+
+            statusText.value = "Синхронизация..."
+            val service = gatt?.getService(BP_SERVICE_UUID)
+            val featureChar = service?.getCharacteristic(BP_FEATURE_CHAR_UUID)
+            val measChar = service?.getCharacteristic(BP_MEAS_CHAR_UUID)
+
+            if (featureChar != null) {
+              android.util.Log.d("OmronBleManager", "Reading BP Features...")
+              gatt?.readCharacteristic(featureChar)
+            } else if (measChar != null) {
+              enableIndication(gatt!!, measChar)
             } else {
-              statusText.value = "Ошибка: Характеристика давления не найдена"
+              statusText.value = "Ошибка: Служба измерения не найдена"
             }
           } else {
-            statusText.value = "Поиск служб не удался: $status"
+            statusText.value = "Ошибка поиска служб: $status"
+          }
+        }
+
+        override fun onCharacteristicRead(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?, status: Int) {
+          if (characteristic?.uuid == BP_FEATURE_CHAR_UUID) {
+            android.util.Log.d("OmronBleManager", "BP Features read status=$status. Now enabling indications.")
+            val service = gatt?.getService(BP_SERVICE_UUID)
+            val measChar = service?.getCharacteristic(BP_MEAS_CHAR_UUID)
+            if (measChar != null) {
+              enableIndication(gatt, measChar)
+            }
+          }
+        }
+
+        private fun enableIndication(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
+          gatt.setCharacteristicNotification(characteristic, true)
+          val descriptor = characteristic.getDescriptor(CCCD_UUID)
+          if (descriptor != null) {
+            descriptor.value = BluetoothGattDescriptor.ENABLE_INDICATION_VALUE
+            gatt.writeDescriptor(descriptor)
+            android.util.Log.d("OmronBleManager", "Enabling indications for 0x2A35")
           }
         }
 
         override fun onDescriptorWrite(gatt: BluetoothGatt?, descriptor: android.bluetooth.BluetoothGattDescriptor?, status: Int) {
           if (status == BluetoothGatt.GATT_SUCCESS) {
-            android.util.Log.d("OmronBleManager", "Descriptor written OK — ожидаем данные давления")
+            android.util.Log.d("OmronBleManager", "Indications enabled OK — ожидаем данные")
             isConnected.value = true
-            statusText.value = "✓ Подписка активна. Начните замер на Omron..."
+            statusText.value = "✓ Готов! Начните замер на Omron M4..."
           } else {
             android.util.Log.w("OmronBleManager", "Descriptor write failed: status=$status")
-            isConnected.value = false
             statusText.value = "Ошибка подписки: $status"
           }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt?, characteristic: BluetoothGattCharacteristic?) {
           val value = characteristic?.value ?: return
-          val hex = value.joinToString(" ") { "%02X".format(it) }
-          android.util.Log.d("OmronBleManager", "onCharacteristicChanged: ${value.size}b hex=[$hex]")
           if (value.size >= 7) {
             val flags = value[0].toInt() and 0xFF
-            android.util.Log.d("OmronBleManager", "flags=0x${"%02X".format(flags)}")
             var sysVal = parseSfloat(value[1], value[2])
             var diaVal = parseSfloat(value[3], value[4])
-            // bit0: units flag — 0=mmHg, 1=kPa. Конвертируем в mmHg, чтобы не показать данные в другой единице
-            if ((flags and 0x01) != 0) {
-              android.util.Log.d("OmronBleManager", "Units=kPa, конвертируем в mmHg (sys=$sysVal dia=$diaVal)")
+            if ((flags and 0x01) != 0) { // kPa to mmHg
               sysVal *= 7.50062
               diaVal *= 7.50062
             }
-            // byte[5], byte[6] = Mean Arterial Pressure (MAP) — пропускаем
+            
             var pulseVal = 0.0
             var offset = 7
             var timestampValue = -1L
-            // bit1: timestamp present (7 bytes: year LE u16, month, day, hour, min, sec)
-            if ((flags and 0x02) != 0) {
+            if ((flags and 0x02) != 0) { // Timestamp
               if (value.size >= offset + 7) {
                 val year = ((value[offset + 1].toInt() and 0xFF) shl 8) or (value[offset].toInt() and 0xFF)
                 val month = value[offset + 2].toInt() and 0xFF
@@ -5409,46 +5545,31 @@ object OmronBleManager {
                 val minute = value[offset + 5].toInt() and 0xFF
                 val second = value[offset + 6].toInt() and 0xFF
                 timestampValue = (((((year.toLong() * 13) + month) * 32 + day) * 24 + hour) * 60 + minute) * 60 + second
-                android.util.Log.d("OmronBleManager", "Timestamp=$year-$month-$day $hour:$minute:$second offset=$offset → ${offset+7}")
               }
               offset += 7
             }
-            // bit2: pulse rate present (2 bytes SFLOAT)
-            if ((flags and 0x04) != 0) {
+            if ((flags and 0x04) != 0) { // Pulse
               if (value.size >= offset + 2) {
                 pulseVal = parseSfloat(value[offset], value[offset + 1])
-                android.util.Log.d("OmronBleManager", "Pulse at offset=$offset: $pulseVal")
               }
             }
+
             val sys = sysVal.toInt()
             val dia = diaVal.toInt()
             val hr = if (pulseVal > 0) pulseVal.toInt() else 72
-            android.util.Log.d("OmronBleManager", "RESULT: sys=$sys dia=$dia hr=$hr ts=$timestampValue (sysRaw=$sysVal diaRaw=$diaVal pulseRaw=$pulseVal)")
-            // Валидация правдоподобности — отбрасываем битые/reserved SFLOAT-значения
-            if (sys !in 40..280 || dia !in 20..200) {
-              android.util.Log.w("OmronBleManager", "Неправдоподобные значения sys=$sys dia=$dia — пакет проигнорирован")
-              return
-            }
-            // ВАЖНО: только запоминаем результат, НЕ доставляем его в UI здесь —
-            // Omron при подключении выгружает всю историю сохранённых замеров
-            // (десятки пакетов за доли секунды), а не только текущий. Запоминаем
-            // запись с максимальным timestamp — это и есть настоящий свежий замер,
-            // совпадающий с тем, что показано на экране прибора. Если timestamp
-            // недоступен (флаг не выставлен) — используем порядок прихода как fallback.
+
+            if (sys !in 40..280 || dia !in 20..200) return
+
             if (timestampValue >= bestTimestampValue) {
               bestTimestampValue = if (timestampValue >= 0) timestampValue else bestTimestampValue
               lastResult.value = Triple(sys, dia, hr)
-              statusText.value = "Успешно принято: $sys/$dia, пульс $hr"
+              statusText.value = "Принято: $sys/$dia, пульс $hr"
 
-              // Ждём SETTLE_DELAY_MS на случай, если следом придёт ещё запись
-              // (история). Если новых пакетов нет — не ждём разрыва связи от
-              // самого прибора (он делает это через много секунд), а доставляем
-              // результат и отключаемся сами.
               settleRunnable?.let { settleHandler.removeCallbacks(it) }
               val runnable = Runnable {
                 val settled = lastResult.value
                 if (settled != null) {
-                  android.util.Log.d("OmronBleManager", "Settle timeout — доставляем без ожидания disconnect: ${settled.first}/${settled.second} hr=${settled.third}")
+                  android.util.Log.d("OmronBleManager", "Settle complete: ${settled.first}/${settled.second}")
                   statusText.value = "✓ ${settled.first}/${settled.second}, пульс ${settled.third}"
                   lastResult.value = null
                   onValueRead(settled.first, settled.second, settled.third)
@@ -5457,11 +5578,7 @@ object OmronBleManager {
               }
               settleRunnable = runnable
               settleHandler.postDelayed(runnable, SETTLE_DELAY_MS)
-            } else {
-              android.util.Log.d("OmronBleManager", "Пакет старее уже сохранённого (ts=$timestampValue < best=$bestTimestampValue) — пропускаем")
             }
-          } else {
-            android.util.Log.w("OmronBleManager", "Пакет слишком короткий: ${value.size} байт")
           }
         }
       }, BluetoothDevice.TRANSPORT_LE)
@@ -5476,16 +5593,20 @@ object OmronBleManager {
     activeGatt?.disconnect()
     activeGatt?.close()
     activeGatt = null
+    
+    try {
+      gattServer?.close()
+    } catch (_: Exception) {}
+    gattServer = null
+    
     isConnected.value = false
     statusText.value = "Ожидание запуска..."
   }
 
-  fun parseSfloat(b1: Byte, b2: Byte): Double {
+  private fun parseSfloat(b1: Byte, b2: Byte): Double {
     val uint16 = ((b2.toInt() and 0xFF) shl 8) or (b1.toInt() and 0xFF)
     var mantissa = uint16 and 0x0FFF
-    if ((mantissa and 0x0800) != 0) {
-      mantissa = mantissa or -0x1000
-    }
+    if ((mantissa and 0x0800) != 0) mantissa = mantissa or -0x1000
     val exponent = uint16 shr 12
     val expValue = if (exponent >= 8) exponent - 16 else exponent
     return mantissa * java.lang.Math.pow(10.0, expValue.toDouble())
@@ -5547,7 +5668,8 @@ fun SettingsScreen(
     foundDevices = emptyList()
     val isBTPermissionGranted = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
       context.checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED &&
-      context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED
+      context.checkSelfPermission(Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+      context.checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED
     } else {
       context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
     }
@@ -5558,6 +5680,7 @@ fun SettingsScreen(
           arrayOf(
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
             Manifest.permission.ACCESS_FINE_LOCATION
           )
         )
@@ -6625,7 +6748,10 @@ fun SettingsScreen(
               } else {
                 onSaveDevice("tonometer", "omron_ble", dev.address, dev.name)
                 selectedDeviceForBinding = null
-                triggerBluetoothBonding(context, dev)
+                // Не просто createBond() — сразу ведём реальный GATT/CTS-хендшейк,
+                // без которого Omron остаётся мигать «P» даже после подтверждения
+                // системного окна сопряжения (см. OmronBleManager.connect/rebondAndRetry).
+                OmronBleManager.connect(context, dev.address) { _, _, _ -> }
               }
             },
             colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
@@ -6730,7 +6856,7 @@ fun SettingsScreen(
             showOmronPairingDialog = false
             onSaveDevice("tonometer", "omron_ble", dev.address, dev.name)
             selectedDeviceForBinding = null
-            triggerBluetoothBonding(context, dev)
+            OmronBleManager.connect(context, dev.address) { _, _, _ -> }
           }) { Text("Готово") }
         },
         dismissButton = {

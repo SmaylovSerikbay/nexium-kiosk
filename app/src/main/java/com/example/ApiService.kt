@@ -8,10 +8,13 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Response
 import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
+import okhttp3.MultipartBody
 import retrofit2.http.Body
 import retrofit2.http.Header
+import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.GET
+import retrofit2.http.Part
 import retrofit2.http.Path
 import java.util.concurrent.TimeUnit
 
@@ -213,7 +216,9 @@ data class AppUpdateStatusRequest(
 data class ExamDetailResponse(
     @Json(name = "exam") val exam: ExamInfo?,
     @Json(name = "nurse_name") val nurseName: String?,
-    @Json(name = "success") val success: Boolean?
+    @Json(name = "success") val success: Boolean?,
+    // null = старый бэкенд без этого поля — считаем разрешённым, как раньше
+    @Json(name = "auto_confirm_enabled") val autoConfirmEnabled: Boolean? = null
 )
 
 @JsonClass(generateAdapter = true)
@@ -291,6 +296,14 @@ interface NexApiService {
     suspend fun getCurrentTokenInfo(
         @Header("X-Device-Token") deviceToken: String
     ): Response<TokenInfoResponse>
+
+    @Multipart
+    @POST("exams/{id}/video")
+    suspend fun uploadExamVideo(
+        @Header("X-Device-Token") deviceToken: String,
+        @Path("id") examId: String,
+        @Part video: MultipartBody.Part
+    ): Response<ResponseBody>
 }
 
 object NexApiClient {

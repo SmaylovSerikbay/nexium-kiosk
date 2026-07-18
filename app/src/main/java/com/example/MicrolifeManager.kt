@@ -53,6 +53,12 @@ object MicrolifeManager {
     private var onResultCb: ((Double) -> Unit)? = null
     private var onErrorCb:  ((String) -> Unit)? = null
 
+    // Термометр при подключении может сначала прислать последнюю запись из своей
+    // памяти (workMode=WORK_MODE_MEMORY) ещё до того, как пользователь нажал START.
+    // Такие записи идут через тот же onResponseUploadMeasureData, что и живой замер —
+    // отличить их можно только по workMode из предыдущего onResponseDeviceInfo.
+    private var lastWorkMode: Int = -1
+
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var timeoutJob: Job? = null
 
@@ -92,6 +98,7 @@ object MicrolifeManager {
 
         isMeasuring.value = true
         statusText.value  = "Поиск термометра…"
+        lastWorkMode = -1
 
         val activity = context as? Activity
         if (activity == null) {
@@ -200,12 +207,19 @@ object MicrolifeManager {
 
         override fun onResponseDeviceInfo(macAddress: String, workMode: Int, batteryVoltage: Float) {
             Log.d(TAG, "DeviceInfo: mac=$macAddress workMode=$workMode battery=${batteryVoltage}V")
+            lastWorkMode = workMode
             statusText.value = "Готов — нажмите START на термометре"
         }
 
         override fun onResponseUploadMeasureData(data: ThermoMeasureData) {
             val temp = data.measureTemperature.toDouble()
-            Log.d(TAG, ">>> MeasureData: temp=$temp flagErr=${data.flagErr} mode=${data.mode}")
+            Log.d(TAG, ">>> MeasureData: temp=$temp flagErr=${data.flagErr} mode=${data.mode} workMode=$lastWorkMode")
+            val memoryMode = thermoProtocol?.WORK_MODE_MEMORY
+            if (memoryMode != null && lastWorkMode == memoryMode) {
+                Log.w(TAG, "workMode=MEMORY — это старая запись из памяти термометра, а не живой замер, пропускаем")
+                statusText.value = "Нажмите START на термометре"
+                return
+            }
             if (data.flagErr != 0) {
                 Log.w(TAG, "flagErr=${data.flagErr} — ошибка измерения, пропускаем")
                 statusText.value = "Ошибка измерения (flagErr=${data.flagErr})"
@@ -355,13 +369,18 @@ object MicrolifeManager {
         timeoutJob?.cancel()
         isMeasuring.value = false
         isConnected.value = false
-        val formatted = String.format("%.1f", temp)
+        // Термометр на своём экране ОБРЕЗАЕТ второй знак после запятой, а не округляет
+        // (36.26 → "36.2", не "36.3"). String.format("%.1f", ...) округляет — из-за этого
+        // наше значение расходилось с прибором на 0.1°C. Обрезаем так же, как прибор.
+        val cents = Math.round(temp * 100)
+        val temp1dp = (cents / 10) / 10.0
+        val formatted = String.format("%.1f", temp1dp)
         statusText.value  = "Результат: $formatted °C"
-        Log.d(TAG, ">>> RESULT: $temp°C")
+        Log.d(TAG, ">>> RESULT: $temp°C (обрезано до $formatted°C)")
         // onResponseUploadMeasureData приходит из BLE-потока SDK, а не с Main —
         // без этого post() обновление Compose-state из onResultCb молча не применяется.
         android.os.Handler(android.os.Looper.getMainLooper()).post {
-            onResultCb?.invoke(temp)
+            onResultCb?.invoke(temp1dp)
         }
         scope.launch {
             delay(500)

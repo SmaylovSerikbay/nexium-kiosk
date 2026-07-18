@@ -60,6 +60,9 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.net.Uri
+import okhttp3.MultipartBody
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.asRequestBody
 import android.widget.VideoView
 import android.widget.MediaController
 import com.example.ui.theme.*
@@ -110,7 +113,7 @@ object AppText {
   val bypass = Trans("ОБХОД\n(1111)", "АЙНАЛЫП ӨТУ\n(1111)")
 
   val systemStatus = Trans("КОНТРОЛЬНЫЙ СПИСОК ДИАГНОСТИКИ", "ДИАГНОСТИКАЛЫҚ БАҚЫЛАУ ТІЗІМІ")
-  val activeWorkflow = Trans("БЕЛСЕНДІ ЖҰМЫС ТЕРМИНАЛЫ", "БЕЛСЕНДІ ЖҰМЫС ТЕРМИНАЛЫ")
+  val activeWorkflow = Trans("АКТИВНЫЙ РАБОЧИЙ ТЕРМИНАЛ", "БЕЛСЕНДІ ЖҰМЫС ТЕРМИНАЛЫ")
   val secureConn = Trans("БЕЗОПАСНОЕ СОЕДИНЕНИЕ // 128-БИТ", "ҚАУІПСІЗ ҚОСЫЛЫМ // 128-БИТ")
   val terminalVersion = Trans("NEXIUM HEALTH • ТЕРМИНАЛ v2.5", "NEXIUM HEALTH • ТЕРМИНАЛ v2.5")
   val physicianId = Trans("ID ВРАЧА: DR-9942", "ДӘРІГЕР ID: DR-9942")
@@ -127,8 +130,8 @@ object AppText {
   
   val valClear = Trans("В НОРМЕ", "ҚАЛЫПТЫ")
   val valSymptoms = Trans("ЖАЛОБЫ", "ШАҒЫМДАР")
-  val valActive = Trans("БЕЛСЕНДІ", "БЕЛСЕНДІ")
-  val valPending = Trans("КҮТУДЕ", "КҮТУДЕ")
+  val valActive = Trans("АКТИВНО", "БЕЛСЕНДІ")
+  val valPending = Trans("ОЖИДАНИЕ", "КҮТУДЕ")
 
   val noSymptomsToday = Trans("Нет жалоб на здоровье сегодня", "Бүгін денсаулығыңызға шағымдарыңыз жоқ")
   val awaitQuestionnaire = Trans("Ожидание заполнения анкеты...", "Анкетаны толтыру күтілуде...")
@@ -185,7 +188,7 @@ object AppText {
   val verifRowAnamnesis = Trans("Физиологический анамнез", "Физиологиялық анамнез")
   val verifRowBp = Trans("Артериальное давление", "Жүрек-қантамыр жүйеси (Қан қысымы)")
   val verifRowHr = Trans("Частота пульса", "Жүрек соғу жиілігі")
-  val verifRowBreath = Trans("Тыныс алу спирометре", "Өкпе спирометриясы (Алкотестер)")
+  val verifRowBreath = Trans("Дыхательный спирометр (Алкотест)", "Өкпе спирометриясы (Алкотестер)")
   val verifRowTemp = Trans("Термальный скрининг core", "Термиялық оптикалық бақылау")
   val verifCompleted = Trans("Завершено", "Аяқталды")
   val verifCalibrated = Trans("Откалибровано", "Калибрленді")
@@ -209,9 +212,9 @@ object AppText {
   
   val stepBadge = Trans("ШАГ", "ҚАДАМ")
   val step1BadgeTitle = Trans("АНАМНЕЗ", "АНАМНЕЗ СЫНАҒЫ")
-  val step2BadgeTitle = Trans("ҚАН ҚЫСЫМЫ", "ҚАН ҚЫСЫМЫ МЕН ПУЛЬС")
-  val step3BadgeTitle = Trans("ТЫНЫС АЛУ СЫНАҒЫ", "ТЫНЫС АЛУ СЫНАҒЫ")
-  val step4BadgeTitle = Trans("ТЕМПЕРАТУРАНЫ СҚАНЕРЛЕУ", "ТЕМПЕРАТУРАНЫ СҚАНЕРЛЕУ")
+  val step2BadgeTitle = Trans("АД И ПУЛЬС", "ҚАН ҚЫСЫМЫ МЕН ПУЛЬС")
+  val step3BadgeTitle = Trans("ТЕСТ ДЫХАНИЯ", "ТЫНЫС АЛУ СЫНАҒЫ")
+  val step4BadgeTitle = Trans("СКАНИРОВАНИЕ ТЕМПЕРАТУРЫ", "ТЕМПЕРАТУРАНЫ СҚАНЕРЛЕУ")
   
   val certSigneeId = Trans("ID подписанта", "Қол қоюшы ID-і")
   val certSignedBy = Trans("Подписано врачом", "Қол қойған дәрігер")
@@ -251,7 +254,8 @@ enum class StepState {
   TEMPERATURE,         // Step 4
   VERIFICATION,        // Step 5
   SECURE_LOADING,      // Post-Sign Review Spinner
-  COMPLETED_VERDICT    // Final Medical Clearance Pass
+  COMPLETED_VERDICT,   // Final Medical Clearance Pass
+  AWAITING_NURSE       // Авто-подтверждение отключено, медсестра не успела решить за время поллинга
 }
 
 enum class ExamSendStatus {
@@ -671,7 +675,102 @@ fun KioskAppRoot(
   var verifiedEmployeeResponse by remember { mutableStateOf<VerifyEmployeeResponse?>(null) }
   var examSendStatus by remember { mutableStateOf(ExamSendStatus.IDLE) }
   var examSendErrorMessage by remember { mutableStateOf("") }
-  
+
+  // Запись видео осмотра: стартует при входе в кабинет сотрудника, останавливается
+  // и отправляется на бэкенд в момент нажатия "Отправить".
+  val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+  val examVideoRecorder = remember { ExamVideoRecorder(context) }
+  var isVideoRecording by remember { mutableStateOf(false) }
+  var videoRecordingStartMs by remember { mutableStateOf(0L) }
+  var videoRecordingElapsedSec by remember { mutableStateOf(0) }
+
+  val examVideoPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted ->
+    if (granted && currentScreen == KioskScreen.DASHBOARD && !isVideoRecording) {
+      examVideoRecorder.start(lifecycleOwner)
+      isVideoRecording = true
+      videoRecordingStartMs = System.currentTimeMillis()
+    }
+  }
+
+  LaunchedEffect(currentScreen) {
+    if (currentScreen == KioskScreen.DASHBOARD && !isVideoRecording) {
+      val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+      if (granted) {
+        examVideoRecorder.start(lifecycleOwner)
+        isVideoRecording = true
+        videoRecordingStartMs = System.currentTimeMillis()
+      } else {
+        examVideoPermissionLauncher.launch(Manifest.permission.CAMERA)
+      }
+    }
+  }
+
+  LaunchedEffect(isVideoRecording) {
+    while (isVideoRecording) {
+      videoRecordingElapsedSec = ((System.currentTimeMillis() - videoRecordingStartMs) / 1000).toInt()
+      delay(1000)
+    }
+  }
+
+  suspend fun stopExamVideoRecording(): java.io.File? {
+    if (!isVideoRecording) return null
+    val file = examVideoRecorder.stopAndGetFile()
+    isVideoRecording = false
+    return file
+  }
+
+  // Незагруженное видео переживает сбой сети: путь к файлу и ID осмотра сохраняются,
+  // чтобы попытаться отправить его повторно при следующем запуске приложения.
+  fun savePendingExamVideo(filePath: String, examId: String) {
+    settingsPrefs.edit()
+      .putString("pending_video_path", filePath)
+      .putString("pending_video_exam_id", examId)
+      .apply()
+  }
+
+  fun clearPendingExamVideo() {
+    settingsPrefs.edit()
+      .remove("pending_video_path")
+      .remove("pending_video_exam_id")
+      .apply()
+  }
+
+  suspend fun uploadExamVideoFile(file: java.io.File?, examId: String) {
+    if (file == null || !file.exists() || examId.isEmpty()) return
+    var success = false
+    try {
+      withContext(Dispatchers.IO) {
+        val requestBody = file.asRequestBody("video/mp4".toMediaType())
+        val part = MultipartBody.Part.createFormData("video", file.name, requestBody)
+        val response = NexApiClient.service.uploadExamVideo(
+          deviceToken = NexApiClient.deviceToken,
+          examId = examId,
+          video = part
+        )
+        success = response.isSuccessful
+      }
+    } catch (e: Exception) {
+      e.printStackTrace()
+    }
+    if (success) {
+      file.delete()
+      clearPendingExamVideo()
+    } else {
+      savePendingExamVideo(file.absolutePath, examId)
+    }
+  }
+
+  // Однократная попытка досдать видео, оставшееся от прошлого запуска из-за сбоя сети.
+  LaunchedEffect(Unit) {
+    val pendingPath = settingsPrefs.getString("pending_video_path", null)
+    val pendingExamId = settingsPrefs.getString("pending_video_exam_id", null)
+    if (pendingPath != null && pendingExamId != null) {
+      uploadExamVideoFile(java.io.File(pendingPath), pendingExamId)
+    }
+  }
+
   // Real physicians/medics verdict states from server polling data
   var finalVerdictDopusk by remember { mutableStateOf("") }
   var finalVerdictMedicName by remember { mutableStateOf("") }
@@ -833,6 +932,10 @@ fun KioskAppRoot(
     examSendStatus = ExamSendStatus.SENDING
     examSendErrorMessage = ""
 
+    // Останавливаем запись видео осмотра сразу по нажатию "Отправить" — сама отправка
+    // на бэкенд произойдёт чуть ниже, как только станет известен ID осмотра.
+    val examVideoFile = stopExamVideoRecording()
+
     val hasComplaints = selectedComplaintsList.isNotEmpty() || plainComplaintsState == "Symptoms Reported"
     val isAbnormalBp = (bpSystolic ?: 120) > 140 || (bpSystolic ?: 120) < 90 || (bpDiastolic ?: 80) > 90 || (bpDiastolic ?: 80) < 60
     val isAbnormalPulse = (heartRateValue ?: 70) > 100 || (heartRateValue ?: 70) < 55
@@ -895,6 +998,13 @@ fun KioskAppRoot(
     if (success) {
       examSendStatus = ExamSendStatus.SUCCESS
 
+      // Отправляем видео осмотра в фоне, не блокируя опрос статуса подписи
+      if (createdExamId.isNotEmpty() && examVideoFile != null) {
+        scope.launch {
+          uploadExamVideoFile(examVideoFile, createdExamId)
+        }
+      }
+
       // Auto-trigger the required server-side payment to unlock the exam for the nurse/medic dashboard
       if (createdExamId.isNotEmpty()) {
         try {
@@ -919,6 +1029,9 @@ fun KioskAppRoot(
       var isSignedOrApproved = false
       var pollAttempts = 0
       val maxPollAttempts = 90 // 180 seconds = 3 minutes timeout
+      // null = ещё не знаем настройку организации/филиала; по умолчанию считаем разрешённым
+      // (совпадает с поведением бэкенда для старых версий API и осмотров без организации)
+      var autoConfirmEnabled = true
 
       while (!isSignedOrApproved && pollAttempts < maxPollAttempts) {
         delay(2000)
@@ -933,6 +1046,7 @@ fun KioskAppRoot(
           if (detailResponse.isSuccessful) {
             val body = detailResponse.body()
             val examObj = body?.exam
+            body?.autoConfirmEnabled?.let { autoConfirmEnabled = it }
             if (examObj != null) {
               val isSigned = examObj.isSigned
               val dopuskVal = examObj.dopusk
@@ -950,14 +1064,20 @@ fun KioskAppRoot(
         }
       }
 
-      // If we finished polling and still no sign, fallback to automated device decision-making cleanly
-      if (!isSignedOrApproved) {
+      if (isSignedOrApproved) {
+        currentStep = StepState.COMPLETED_VERDICT
+      } else if (autoConfirmEnabled) {
+        // Авто-подтверждение разрешено для этой организации/филиала, но медсестра
+        // не успела среагировать за 15с на сервере — показываем вердикт аппарата как раньше.
         finalVerdictDopusk = deviceDopuskStr
         finalVerdictMedicName = if (activeLanguage == AppLanguage.KAZAKH) "АМБ АБК автотексеру қызметі" else "Служба автопроверки АПК АМК"
         finalVerdictToken = if (createdExamId != "mock-id") createdExamId.takeLast(12).uppercase() else "AUTO-VERIFIED"
+        currentStep = StepState.COMPLETED_VERDICT
+      } else {
+        // Авто-подтверждение отключено для организации/филиала — решение не принято,
+        // никакого вердикта показывать нельзя. Ждём медсестру.
+        currentStep = StepState.AWAITING_NURSE
       }
-
-      currentStep = StepState.COMPLETED_VERDICT
     } else {
       examSendStatus = ExamSendStatus.ERROR
     }
@@ -1059,6 +1179,10 @@ fun KioskAppRoot(
   fun resetAllWorkflowData() {
     // Освобождаем BLE термометр перед сбросом (тонометр Omron не трогаем — он управляется своим DisposableEffect)
     MicrolifeManager.disconnect()
+    // Осмотр брошен без отправки — просто останавливаем и отбрасываем незавершённую запись.
+    if (isVideoRecording) {
+      scope.launch { stopExamVideoRecording()?.delete() }
+    }
     bpSystolic = null
     bpDiastolic = null
     heartRateValue = null
@@ -1346,6 +1470,32 @@ fun KioskAppRoot(
             contentDescription = "Settings",
             tint = AppleLightGrey.copy(alpha = 0.6f),
             modifier = Modifier.size(28.dp)
+          )
+        }
+      }
+
+      if (isVideoRecording) {
+        Row(
+          verticalAlignment = Alignment.CenterVertically,
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier
+            .align(Alignment.TopStart)
+            .padding(16.dp)
+            .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+            .testTag("exam_video_recording_indicator")
+        ) {
+          Box(
+            modifier = Modifier
+              .size(8.dp)
+              .background(Color.Red, CircleShape)
+          )
+          Text(
+            text = "REC %02d:%02d".format(videoRecordingElapsedSec / 60, videoRecordingElapsedSec % 60),
+            color = Color.White,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            letterSpacing = 0.5.sp
           )
         }
       }
@@ -2018,6 +2168,7 @@ fun KioskDashboard(
       ) {
         WorkflowStepDispatcher(
           currentStep = currentStep,
+          metrics = metrics,
           selectedComplaints = selectedComplaints,
           onComplaintsSelected = onComplaintsSelected,
           onConfirmComplaints = onConfirmComplaints,
@@ -2471,6 +2622,7 @@ fun BentoCellHealthComplaints(metric: MetricState) {
 @Composable
 fun WorkflowStepDispatcher(
   currentStep: StepState,
+  metrics: List<MetricState>,
   selectedComplaints: List<String>,
   onComplaintsSelected: (List<String>) -> Unit,
   onConfirmComplaints: (Boolean) -> Unit,
@@ -2510,7 +2662,7 @@ fun WorkflowStepDispatcher(
         Step4Temperature(onConfirm = onSimulateTemperature)
       }
       StepState.VERIFICATION -> {
-        Step5Verification(onSignClick = onSignAndSubmit)
+        Step5Verification(onSignClick = onSignAndSubmit, metrics = metrics)
       }
       StepState.SECURE_LOADING -> {
         SecureDecisionsLoadingScreen(
@@ -2528,6 +2680,78 @@ fun WorkflowStepDispatcher(
           onRestart = onResetAll
         )
       }
+      StepState.AWAITING_NURSE -> {
+        AwaitingNurseDecisionScreen(onRestart = onResetAll)
+      }
+    }
+  }
+}
+
+// ==========================================
+// AWAITING NURSE DECISION (auto-confirm disabled, nurse hasn't decided yet)
+// ==========================================
+@Composable
+fun AwaitingNurseDecisionScreen(onRestart: () -> Unit) {
+  val lang = LocalAppLanguage.current
+  Column(
+    modifier = Modifier.fillMaxSize(),
+    verticalArrangement = Arrangement.SpaceBetween,
+    horizontalAlignment = Alignment.CenterHorizontally
+  ) {
+    Column(
+      modifier = Modifier
+        .fillMaxWidth()
+        .weight(1f),
+      verticalArrangement = Arrangement.Center,
+      horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+      Box(
+        modifier = Modifier
+          .size(80.dp)
+          .clip(CircleShape)
+          .background(AppleAmber.copy(alpha = 0.12f))
+          .border(BorderStroke(2.dp, AppleAmber), CircleShape),
+        contentAlignment = Alignment.Center
+      ) {
+        Icon(
+          imageVector = Icons.Default.HourglassEmpty,
+          contentDescription = "Awaiting nurse",
+          tint = AppleAmber,
+          modifier = Modifier.size(44.dp)
+        )
+      }
+
+      Spacer(modifier = Modifier.height(24.dp))
+
+      Text(
+        text = if (lang == AppLanguage.KAZAKH) "МЕДБИКЕ ШЕШІМ ҚАБЫЛДАМАДЫ" else "МЕДСЕСТРА ЕЩЁ НЕ ПРИНЯЛА РЕШЕНИЕ",
+        color = AppleAmber,
+        fontSize = 20.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.5.sp,
+        textAlign = TextAlign.Center
+      )
+
+      Spacer(modifier = Modifier.height(8.dp))
+
+      Text(
+        text = if (lang == AppLanguage.KAZAKH)
+          "Нәтижені алу үшін медбикеге хабарласыңыз немесе күте тұрыңыз."
+        else
+          "Обратитесь к медсестре для получения результата или подождите ещё немного.",
+        fontSize = 13.sp,
+        textAlign = TextAlign.Center,
+        modifier = Modifier.padding(horizontal = 24.dp)
+      )
+    }
+
+    Button(
+      onClick = onRestart,
+      modifier = Modifier
+        .fillMaxWidth()
+        .padding(24.dp)
+    ) {
+      Text(if (lang == AppLanguage.KAZAKH) "Басынан бастау" else "Начать заново")
     }
   }
 }
@@ -3637,9 +3861,11 @@ fun Step4Temperature(
 // ==========================================
 @Composable
 fun Step5Verification(
-  onSignClick: () -> Unit
+  onSignClick: () -> Unit,
+  metrics: List<MetricState>
 ) {
   val lang = LocalAppLanguage.current
+  fun metricValue(name: String) = metrics.firstOrNull { it.name == name }?.value
   Column(
     modifier = Modifier.fillMaxSize(),
     verticalArrangement = Arrangement.SpaceBetween
@@ -3675,12 +3901,17 @@ fun Step5Verification(
           .weight(1f),
         verticalArrangement = Arrangement.spacedBy(8.dp)
       ) {
+        val bpValue    = metricValue(AppText.bpTitle.get(lang))
+        val hrValue    = metricValue(AppText.hrTitle.get(lang))
+        val breathValue = metricValue(AppText.breathTitle.get(lang))
+        val tempValue  = metricValue(AppText.tempTitle.get(lang))
+
         val verificationRows = listOf(
           Triple(AppText.verifRowAnamnesis.get(lang), AppText.verifCompleted.get(lang), Icons.Default.AssignmentTurnedIn),
-          Triple(AppText.verifRowBp.get(lang), "${AppText.verifCalibrated.get(lang)} (118/77)", Icons.Default.Favorite),
-          Triple(AppText.verifRowHr.get(lang), "${AppText.verifCalibrated.get(lang)} (72 BPM)", Icons.Default.Favorite),
-          Triple(AppText.verifRowBreath.get(lang), "${AppText.verifVerifiedNormal.get(lang)} (0.00)", Icons.Default.Air),
-          Triple(AppText.verifRowTemp.get(lang), "${AppText.verifVerifiedNormal.get(lang)} (36.6 °C)", Icons.Default.Thermostat)
+          Triple(AppText.verifRowBp.get(lang), "${AppText.verifCalibrated.get(lang)} (${bpValue ?: "—"})", Icons.Default.Favorite),
+          Triple(AppText.verifRowHr.get(lang), "${AppText.verifCalibrated.get(lang)} (${hrValue ?: "—"} BPM)", Icons.Default.Favorite),
+          Triple(AppText.verifRowBreath.get(lang), "${AppText.verifVerifiedNormal.get(lang)} (${breathValue ?: "—"})", Icons.Default.Air),
+          Triple(AppText.verifRowTemp.get(lang), "${AppText.verifVerifiedNormal.get(lang)} (${tempValue ?: "—"} °C)", Icons.Default.Thermostat)
         )
 
         verificationRows.forEach { row ->
@@ -4449,7 +4680,7 @@ fun getDeterministicOrg(name: String?, lang: AppLanguage): String {
   val orgs = listOf(
     Trans("Altiora Транспорт Сервис", "Altiora Көлік Сервисі"),
     Trans("Altiora Логистика", "Altiora Логистика және Терминалдары"),
-    Trans("Altiora Инжиниринг өндірісі", "Altiora Инжиниринг өндірісі")
+    Trans("Altiora Инжиниринг Продакшн", "Altiora Инжиниринг өндірісі")
   )
   val index = kotlin.math.abs(hashCode) % orgs.size
   return orgs[index].get(lang)

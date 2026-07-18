@@ -312,6 +312,18 @@ class FrontCameraTakePicturePreview : androidx.activity.result.contract.Activity
   }
 }
 
+// Кодирует снимок с камеры в JPEG Base64 data URL для отправки на бэкенд (аватар, Face ID).
+fun bitmapToJpegDataUrl(bitmap: android.graphics.Bitmap): String? {
+  return try {
+    val stream = java.io.ByteArrayOutputStream()
+    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+    val encoded = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
+    "data:image/jpeg;base64,$encoded"
+  } catch (e: Exception) {
+    null
+  }
+}
+
 fun getInitials(name: String?): String {
   if (name.isNullOrBlank()) return "👤"
   val parts = name.trim().split("\\s+".toRegex())
@@ -674,6 +686,7 @@ fun KioskAppRoot(
   var isVerifyingEmployee by remember { mutableStateOf(false) }
   var showConfirmationDialog by remember { mutableStateOf(false) }
   var verifiedEmployeeResponse by remember { mutableStateOf<VerifyEmployeeResponse?>(null) }
+  var isTogglingFaceId by remember { mutableStateOf(false) }
   var examSendStatus by remember { mutableStateOf(ExamSendStatus.IDLE) }
   var examSendErrorMessage by remember { mutableStateOf("") }
 
@@ -1177,6 +1190,119 @@ fun KioskAppRoot(
     }
   }
 
+  fun handleVerifyFace(bitmap: android.graphics.Bitmap) {
+    val base64Photo = bitmapToJpegDataUrl(bitmap)
+    if (base64Photo == null) {
+      shakeTrigger += 1
+      pinErrorText = if (activeLanguage == AppLanguage.KAZAKH) "Суретті өңдеу мүмкін болмады" else "Не удалось обработать снимок"
+      return
+    }
+    scope.launch {
+      isVerifyingEmployee = true
+      pinErrorText = ""
+      try {
+        val response = withContext(Dispatchers.IO) {
+          NexApiClient.service.verifyFace(
+            deviceToken = NexApiClient.deviceToken,
+            request = VerifyFaceRequest(facePhoto = base64Photo)
+          )
+        }
+        if (response.exists) {
+          verifiedEmployeeResponse = response.copy(
+            fullName = response.fullName ?: "Сотрудник ${response.employeeId}",
+            organizationName = response.getEffectiveOrganization().ifEmpty { null },
+            branchName = response.getEffectiveBranch().ifEmpty { null },
+            positionName = response.getEffectivePosition().ifEmpty { null },
+            photoUrl = response.getEffectivePhotoUrl()
+          )
+          currentScreen = KioskScreen.CONFIRMATION
+        } else {
+          shakeTrigger += 1
+          pinErrorText = if (activeLanguage == AppLanguage.KAZAKH) "Бет танылмады" else "Лицо не распознано"
+        }
+      } catch (e: Exception) {
+        shakeTrigger += 1
+        pinErrorText = ApiErrorText.fromThrowable(
+          throwable = e,
+          lang = activeLanguage,
+          operation = if (activeLanguage == AppLanguage.KAZAKH) {
+            "Face ID арқылы кіру мүмкін болмады"
+          } else {
+            "Не удалось войти по Face ID"
+          }
+        )
+      } finally {
+        isVerifyingEmployee = false
+      }
+    }
+  }
+
+  val faceCameraLauncher = rememberLauncherForActivityResult(
+    contract = FrontCameraTakePicturePreview()
+  ) { bitmap -> if (bitmap != null) handleVerifyFace(bitmap) }
+  val faceCameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted -> if (granted) faceCameraLauncher.launch(null) }
+
+  fun launchFaceIdLogin() {
+    val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    if (granted) faceCameraLauncher.launch(null) else faceCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+  }
+
+  // Энролмент/отключение Face ID — только по решению уже вошедшего сотрудника, на экране CONFIRMATION.
+  fun handleEnrollFace(bitmap: android.graphics.Bitmap) {
+    val employeeId = verifiedEmployeeResponse?.employeeId ?: return
+    val base64Photo = bitmapToJpegDataUrl(bitmap) ?: return
+    scope.launch {
+      isTogglingFaceId = true
+      try {
+        val response = withContext(Dispatchers.IO) {
+          NexApiClient.service.enrollFace(
+            deviceToken = NexApiClient.deviceToken,
+            request = EnrollFaceRequest(employeeId = employeeId, facePhoto = base64Photo)
+          )
+        }
+        verifiedEmployeeResponse = verifiedEmployeeResponse?.copy(faceIdEnabled = response.faceIdEnabled)
+      } catch (e: Exception) {
+        // Тихо игнорируем — сотрудник просто останется без Face ID и попробует снова
+      } finally {
+        isTogglingFaceId = false
+      }
+    }
+  }
+
+  fun handleDisableFace() {
+    val employeeId = verifiedEmployeeResponse?.employeeId ?: return
+    scope.launch {
+      isTogglingFaceId = true
+      try {
+        withContext(Dispatchers.IO) {
+          NexApiClient.service.disableFace(
+            deviceToken = NexApiClient.deviceToken,
+            request = DisableFaceRequest(employeeId = employeeId)
+          )
+        }
+        verifiedEmployeeResponse = verifiedEmployeeResponse?.copy(faceIdEnabled = false)
+      } catch (e: Exception) {
+        // Тихо игнорируем
+      } finally {
+        isTogglingFaceId = false
+      }
+    }
+  }
+
+  val enrollFaceCameraLauncher = rememberLauncherForActivityResult(
+    contract = FrontCameraTakePicturePreview()
+  ) { bitmap -> if (bitmap != null) handleEnrollFace(bitmap) }
+  val enrollFaceCameraPermissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted -> if (granted) enrollFaceCameraLauncher.launch(null) }
+
+  fun launchEnrollFace() {
+    val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+    if (granted) enrollFaceCameraLauncher.launch(null) else enrollFaceCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+  }
+
   fun resetAllWorkflowData() {
     // Освобождаем BLE термометр перед сбросом (тонометр Omron не трогаем — он управляется своим DisposableEffect)
     MicrolifeManager.disconnect()
@@ -1273,6 +1399,7 @@ fun KioskAppRoot(
               onDeleteClick = { handlePinDelete() },
               onVerifyClick = { handleVerifyEmployee() },
               onRegisterClick = { currentScreen = KioskScreen.REGISTRATION },
+              onFaceIdClick = { launchFaceIdLogin() },
               onChangeLanguage = {
                 enteredPin = ""
                 pinErrorText = ""
@@ -1323,7 +1450,10 @@ fun KioskAppRoot(
                   enteredPin = ""
                   verifiedEmployeeResponse = null
                   currentScreen = KioskScreen.AUTHORIZATION
-                }
+                },
+                isTogglingFaceId = isTogglingFaceId,
+                onEnableFaceId = { launchEnrollFace() },
+                onDisableFaceId = { handleDisableFace() }
               )
             } else {
               currentScreen = KioskScreen.AUTHORIZATION
@@ -1651,6 +1781,7 @@ fun AuthorizationGate(
   onDeleteClick: () -> Unit,
   onVerifyClick: () -> Unit,
   onRegisterClick: () -> Unit,
+  onFaceIdClick: () -> Unit = {},
   onChangeLanguage: () -> Unit = {}
 ) {
   val lang = LocalAppLanguage.current
@@ -1834,6 +1965,36 @@ fun AuthorizationGate(
             )
             Text(
               text = if (lang == AppLanguage.KAZAKH) "Қызметкерді тіркеу" else "Регистрация сотрудника",
+              color = AppleBlue,
+              fontSize = 12.sp,
+              fontWeight = FontWeight.Bold,
+              letterSpacing = 0.5.sp
+            )
+          }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        Button(
+          onClick = { onFaceIdClick() },
+          enabled = !isVerifying,
+          colors = ButtonDefaults.buttonColors(containerColor = AppleBlue.copy(alpha = 0.15f)),
+          border = BorderStroke(1.2.dp, AppleBlue.copy(alpha = 0.6f)),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.testTag("btn_face_id")
+        ) {
+          Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Icon(
+              imageVector = Icons.Default.Face,
+              contentDescription = null,
+              tint = AppleBlue,
+              modifier = Modifier.size(16.dp)
+            )
+            Text(
+              text = if (lang == AppLanguage.KAZAKH) "Face ID арқылы кіру" else "Войти по Face ID",
               color = AppleBlue,
               fontSize = 12.sp,
               fontWeight = FontWeight.Bold,
@@ -4324,7 +4485,10 @@ fun StepHeaderBadge(stepNum: Int, title: String) {
 fun ConfirmationScreen(
   response: VerifyEmployeeResponse,
   onConfirm: () -> Unit,
-  onDismiss: () -> Unit
+  onDismiss: () -> Unit,
+  isTogglingFaceId: Boolean = false,
+  onEnableFaceId: () -> Unit = {},
+  onDisableFaceId: () -> Unit = {}
 ) {
   val lang = LocalAppLanguage.current
   Column(
@@ -4545,6 +4709,39 @@ fun ConfirmationScreen(
               InfoTableRow(label = AppText.confirmDept.get(lang), value = pos)
             }
           }
+        }
+      }
+    }
+
+    // Face ID — сотрудник сам решает, включать или выключать вход по лицу
+    Row(
+      modifier = Modifier
+        .fillMaxWidth(0.9f)
+        .padding(bottom = 12.dp),
+      horizontalArrangement = Arrangement.Center,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      if (isTogglingFaceId) {
+        CircularProgressIndicator(color = AppleBlue, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+      } else {
+        TextButton(onClick = { if (response.faceIdEnabled == true) onDisableFaceId() else onEnableFaceId() }) {
+          Icon(
+            imageVector = Icons.Default.Face,
+            contentDescription = null,
+            tint = AppleBlue,
+            modifier = Modifier.size(16.dp)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = if (response.faceIdEnabled == true) {
+              if (lang == AppLanguage.KAZAKH) "Face ID өшіру" else "Отключить Face ID"
+            } else {
+              if (lang == AppLanguage.KAZAKH) "Face ID қосу" else "Включить Face ID"
+            },
+            color = AppleBlue,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold
+          )
         }
       }
     }

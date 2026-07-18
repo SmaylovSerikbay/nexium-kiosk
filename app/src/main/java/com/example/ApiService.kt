@@ -62,7 +62,8 @@ data class VerifyEmployeeResponse(
     @Json(name = "profile_photo") val profilePhoto: String? = null,
     @Json(name = "profile_picture") val profilePicture: String? = null,
     @Json(name = "picture") val picture: String? = null,
-    @Json(name = "pic") val pic: String? = null
+    @Json(name = "pic") val pic: String? = null,
+    @Json(name = "face_id_enabled") val faceIdEnabled: Boolean? = null
 ) {
     // Helper to get the organization name safely
     fun getEffectiveOrganization(): String {
@@ -104,6 +105,22 @@ data class VerifyEmployeeResponse(
         return resolved
     }
 }
+
+@JsonClass(generateAdapter = true)
+data class VerifyFaceRequest(
+    @Json(name = "face_photo") val facePhoto: String
+)
+
+@JsonClass(generateAdapter = true)
+data class EnrollFaceRequest(
+    @Json(name = "employee_id") val employeeId: String,
+    @Json(name = "face_photo") val facePhoto: String
+)
+
+@JsonClass(generateAdapter = true)
+data class DisableFaceRequest(
+    @Json(name = "employee_id") val employeeId: String
+)
 
 @JsonClass(generateAdapter = true)
 data class CreateExamRequest(
@@ -236,6 +253,24 @@ interface NexApiService {
         @Header("X-Device-Token") deviceToken: String,
         @Body request: VerifyEmployeeRequest
     ): VerifyEmployeeResponse
+
+    @POST("exams/verify-face")
+    suspend fun verifyFace(
+        @Header("X-Device-Token") deviceToken: String,
+        @Body request: VerifyFaceRequest
+    ): VerifyEmployeeResponse
+
+    @POST("exams/enroll-face")
+    suspend fun enrollFace(
+        @Header("X-Device-Token") deviceToken: String,
+        @Body request: EnrollFaceRequest
+    ): VerifyEmployeeResponse
+
+    @POST("exams/disable-face")
+    suspend fun disableFace(
+        @Header("X-Device-Token") deviceToken: String,
+        @Body request: DisableFaceRequest
+    ): Response<ResponseBody>
 
     @POST("exams/create")
     suspend fun createExam(

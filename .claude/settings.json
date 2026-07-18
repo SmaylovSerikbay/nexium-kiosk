@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/ubuntu/Documents/projectsgo/nexium/internal/handler/**)"
+    ],
+    "additionalDirectories": [
+      "/home/ubuntu/Documents/projectsgo/nexium/internal/config",
+      "/home/ubuntu/Documents/projectsgo/nexium/internal/model",
+      "/home/ubuntu/Documents/projectsgo/nexium/internal/handler"
+    ]
+  }
+}

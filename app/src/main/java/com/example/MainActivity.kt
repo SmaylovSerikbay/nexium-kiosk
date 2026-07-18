@@ -2567,16 +2567,9 @@ fun KioskDashboard(
         modifier = Modifier
           .fillMaxWidth()
           .testTag("dashboard_footer"),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        horizontalArrangement = Arrangement.End,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Text(
-          text = AppText.physicianId.get(lang),
-          color = AppleLightGrey.copy(alpha = 0.3f),
-          fontSize = 10.sp,
-          fontWeight = FontWeight.Bold,
-          letterSpacing = 1.sp
-        )
         Text(
           text = AppText.encryptedTransfer.get(lang),
           color = AppleLightGrey.copy(alpha = 0.3f),
@@ -4601,13 +4594,6 @@ fun FinalClearanceVerdictScreen(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.SpaceBetween
         ) {
-          Text(AppText.certSigneeId.get(lang), color = AppleMutedGrey, fontSize = 11.sp)
-          Text("NXM-PHY-MED", color = AppleLightGrey, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
-        }
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween
-        ) {
           Text(AppText.certSignedBy.get(lang), color = AppleMutedGrey, fontSize = 11.sp)
           Text(medicName.ifEmpty { if (lang == AppLanguage.KAZAKH) "АМБ АБК кезекші медигі" else "Дежурный медик АПК АМК" }, color = AppleLightGrey, fontSize = 11.sp, fontWeight = FontWeight.Medium)
         }
@@ -4622,13 +4608,6 @@ fun FinalClearanceVerdictScreen(
             fontSize = 11.sp,
             fontWeight = FontWeight.Bold
           )
-        }
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween
-        ) {
-          Text(AppText.certToken.get(lang), color = AppleMutedGrey, fontSize = 11.sp)
-          Text(signatureToken.ifEmpty { "N/A" }, color = AppleLightGrey, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
         }
       }
     }

@@ -2065,11 +2065,15 @@ fun AuthorizationGate(
 
       // Interactive ID display slot with shake modifier applied
       Column(
-        modifier = Modifier
-          .offset(x = shakeOffset.value.dp)
-          .testTag("pin_display_section"),
+        modifier = Modifier.testTag("pin_display_section"),
         horizontalAlignment = Alignment.CenterHorizontally
       ) {
+        // Тряска при неверном ID должна затрагивать только сам ввод/ошибку,
+        // а не кнопки регистрации/Face ID и смены языка ниже.
+        Column(
+          modifier = Modifier.offset(x = shakeOffset.value.dp),
+          horizontalAlignment = Alignment.CenterHorizontally
+        ) {
         if (isVerifying) {
           Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -2147,6 +2151,7 @@ fun AuthorizationGate(
                 .testTag("pin_error_subtext")
             )
           }
+        }
         }
 
         Spacer(modifier = Modifier.height(16.dp))

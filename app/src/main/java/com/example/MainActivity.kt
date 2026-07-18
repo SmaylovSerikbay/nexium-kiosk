@@ -56,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -70,6 +71,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
 import kotlin.math.cos
 import kotlin.math.sin
 import android.bluetooth.*
@@ -81,6 +83,13 @@ import android.os.Looper
 import android.Manifest
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageCapture
+import androidx.camera.core.ImageCaptureException
+import androidx.camera.core.ImageProxy
+import androidx.camera.core.Preview
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.view.PreviewView
 
 // Screen & Step States
 enum class KioskScreen {
@@ -91,6 +100,10 @@ enum class KioskScreen {
   DASHBOARD,
   SETTINGS
 }
+
+// Режим полноэкранного сканера лица (см. FaceIdScanScreen): вход по Face ID
+// или включение Face ID уже опознанным сотрудником.
+enum class FaceIdCaptureMode { LOGIN, ENROLL }
 
 enum class AppLanguage {
   KAZAKH,
@@ -106,7 +119,7 @@ class Trans(val ru: String, val kk: String) {
 object AppText {
   val titleBranding = Trans("NEXIUM HEALTH", "NEXIUM HEALTH")
   val subtitleBranding = Trans("Medical Kiosk Authorization Gate", "Медициналық терминалға кіру шлюзі")
-  val authSubtitle = Trans("Авторизация медицинского терминала", "Медициналық терминалға авторласу")
+  val authSubtitle = Trans("Авторизация медицинского терминала", "Медициналық терминалға авторлану")
   val authPinPrompt = Trans("ВВЕДИТЕ ПИН-КОД ДЛЯ ВХОДА", "КІРУ ҮШІН ПИН-КОДТЫ ЕНГІЗІҢІЗ")
   val authHint = Trans("Подсказка: Введите '1111'", "Нұсқау: '1111' енгізіңіз")
   val employeeNotFound = Trans("Сотрудник не найден", "Қызметкер табылмады")
@@ -123,7 +136,7 @@ object AppText {
   val hrTitle = Trans("Частота пульса", "Жүрек соғу жиілігі")
   val breathTitle = Trans("Алкотестер", "Алкотестер")
   val tempTitle = Trans("Температура тела", "Дене температурасы")
-  val complaintsTitle = Trans("Жалобы на здоровье", "Денсаулыққа shaǵymdar")
+  val complaintsTitle = Trans("Жалобы на здоровье", "Денсаулыққа шағымдар")
 
   val awaitValue = Trans("Ожидание...", "Күтілуде...")
   val pendingValue = Trans("В очереди", "Күтуде")
@@ -156,7 +169,7 @@ object AppText {
     "Оставайтесь полностью неподвижны. Поместите руку в манжету тонометра, зафиксируйте ее, сядьте ровно и соблюдайте тишину.",
     "Қозғалмай отырыңыз. Қолыңызды қан қысымын өлшейтін манжетке салыңыз, бекітіңіз және тыныштықты сақтаңыз."
   )
-  val bpScanning = Trans("Идет калибровка сканирования давления...", "Сенсор калибрлеу белсенді...")
+  val bpScanning = Trans("Идет калибровка сканирования давления...", "Сенсорды калибрлеу белсенді...")
   val bpInflating = Trans("НАГНЕТАНИЕ", "ҚЫСЫМ ТОЛТЫРУ")
   val bpCalibrating = Trans("Калибровка датчиков...", "Сенсорларды ретке келтіру...")
   val bpButtonScan = Trans("Запустить сенсорное сканирование", "Сенсорлық сканерлеуді бастау")
@@ -186,7 +199,7 @@ object AppText {
     "Барлық біріктірілген диагностикалық көрсеткіштер сессиямен синхрондалды. Төмендегі деректерді тексеріңіз."
   )
   val verifRowAnamnesis = Trans("Физиологический анамнез", "Физиологиялық анамнез")
-  val verifRowBp = Trans("Артериальное давление", "Жүрек-қантамыр жүйеси (Қан қысымы)")
+  val verifRowBp = Trans("Артериальное давление", "Жүрек-қантамыр жүйесі (Қан қысымы)")
   val verifRowHr = Trans("Частота пульса", "Жүрек соғу жиілігі")
   val verifRowBreath = Trans("Дыхательный спирометр (Алкотест)", "Өкпе спирометриясы (Алкотестер)")
   val verifRowTemp = Trans("Термальный скрининг core", "Термиялық оптикалық бақылау")
@@ -324,6 +337,175 @@ fun bitmapToJpegDataUrl(bitmap: android.graphics.Bitmap): String? {
   }
 }
 
+// Декодирует JPEG-кадр из ImageCapture и поворачивает его по EXIF-повороту сенсора.
+fun imageProxyToBitmap(image: ImageProxy): android.graphics.Bitmap? {
+  val buffer = image.planes[0].buffer
+  val bytes = ByteArray(buffer.remaining())
+  buffer.get(bytes)
+  val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+  val rotation = image.imageInfo.rotationDegrees
+  if (rotation == 0) return decoded
+  val matrix = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+  return android.graphics.Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true)
+}
+
+// Снимает один кадр с ImageCapture как suspend-вызов — обёртка над callback-API CameraX.
+suspend fun captureFaceFrame(context: Context, capture: ImageCapture): android.graphics.Bitmap? =
+  kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+    capture.takePicture(
+      ContextCompat.getMainExecutor(context),
+      object : ImageCapture.OnImageCapturedCallback() {
+        override fun onCaptureSuccess(image: ImageProxy) {
+          val bitmap = imageProxyToBitmap(image)
+          image.close()
+          if (cont.isActive) cont.resume(bitmap)
+        }
+        override fun onError(exception: ImageCaptureException) {
+          if (cont.isActive) cont.resume(null)
+        }
+      }
+    )
+  }
+
+// Полноэкранный сканер лица со живым превью с фронтальной камеры: работает как обычный СКУД —
+// открылся, сам непрерывно снимает кадры и шлёт на сервер, пока не найдёт совпадение или его не отменят.
+// Овальная рамка-гид считается от высоты экрана (не ширины), чтобы не искажаться на горизонтальном планшете.
+@Composable
+fun FaceIdScanScreen(
+  title: String,
+  subtitle: String,
+  isProcessing: Boolean,
+  statusText: String,
+  isError: Boolean,
+  onCapture: (android.graphics.Bitmap) -> Unit,
+  onCancel: () -> Unit
+) {
+  val lang = LocalAppLanguage.current
+  val context = androidx.compose.ui.platform.LocalContext.current
+  val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+
+  var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+  var hasCameraPermission by remember {
+    mutableStateOf(context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
+  }
+  val permissionLauncher = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { granted -> hasCameraPermission = granted }
+  LaunchedEffect(Unit) { if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA) }
+
+  // Авто-скан: как только камера готова и предыдущая проверка на сервере завершилась (isProcessing = false),
+  // берём новый кадр и отдаём его наверх — без кнопки "Сделать снимок". Пауза даёт автофокусу устояться.
+  val capture = imageCapture
+  LaunchedEffect(capture, isProcessing) {
+    if (capture == null || isProcessing) return@LaunchedEffect
+    delay(1200)
+    val bitmap = captureFaceFrame(context, capture)
+    if (bitmap != null) onCapture(bitmap)
+  }
+
+  Box(
+    modifier = Modifier
+      .fillMaxSize()
+      .background(Color.Black)
+  ) {
+    if (hasCameraPermission) {
+      AndroidView(
+        modifier = Modifier.fillMaxSize(),
+        factory = { ctx ->
+          val previewView = PreviewView(ctx).apply {
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+          }
+          val future = ProcessCameraProvider.getInstance(ctx)
+          future.addListener({
+            try {
+              val provider = future.get()
+              val preview = Preview.Builder().build().also {
+                it.setSurfaceProvider(previewView.surfaceProvider)
+              }
+              val newCapture = ImageCapture.Builder().build()
+              provider.unbindAll()
+              provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, preview, newCapture)
+              imageCapture = newCapture
+            } catch (e: Exception) {
+              // Камера недоступна — пользователь увидит чёрный экран и сможет отменить сканирование.
+            }
+          }, ContextCompat.getMainExecutor(ctx))
+          previewView
+        }
+      )
+    } else {
+      Text(
+        text = if (lang == AppLanguage.KAZAKH) "Камераға рұқсат қажет" else "Нужен доступ к камере",
+        color = Color.White,
+        modifier = Modifier.align(Alignment.Center)
+      )
+    }
+
+    // Овальная рамка-гид — размер считаем от высоты экрана и фиксированной пропорции лица (~0.74),
+    // а не от ширины: на горизонтальном планшете ширина намного больше высоты и овал "расплющивало".
+    val guideColor = if (isError) AppleAmber else AppleBlue
+    val scanPulse = rememberInfiniteTransition(label = "faceScanPulse")
+    val pulseAlpha by scanPulse.animateFloat(
+      initialValue = 0.5f,
+      targetValue = 1f,
+      animationSpec = infiniteRepeatable(tween(900, easing = EaseInOutCirc), RepeatMode.Reverse),
+      label = "faceScanPulseAlpha"
+    )
+    Canvas(modifier = Modifier.fillMaxSize()) {
+      val ovalHeight = size.height * 0.62f
+      val ovalWidth = (ovalHeight * 0.74f).coerceAtMost(size.width * 0.85f)
+      val centerX = size.width / 2f
+      val centerY = size.height * 0.45f
+      drawOval(
+        color = guideColor.copy(alpha = if (isProcessing || isError) 1f else pulseAlpha),
+        topLeft = Offset(centerX - ovalWidth / 2f, centerY - ovalHeight / 2f),
+        size = androidx.compose.ui.geometry.Size(ovalWidth, ovalHeight),
+        style = Stroke(width = 4.dp.toPx())
+      )
+    }
+
+    Row(
+      modifier = Modifier
+        .fillMaxWidth()
+        .align(Alignment.TopCenter)
+        .windowInsetsPadding(WindowInsets.safeDrawing)
+        .padding(20.dp),
+      horizontalArrangement = Arrangement.SpaceBetween,
+      verticalAlignment = Alignment.CenterVertically
+    ) {
+      IconButton(
+        onClick = onCancel,
+        modifier = Modifier.background(Color.White.copy(alpha = 0.12f), CircleShape)
+      ) {
+        Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel", tint = Color.White)
+      }
+      Text(text = title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+      Spacer(modifier = Modifier.size(40.dp))
+    }
+
+    Column(
+      modifier = Modifier
+        .align(Alignment.BottomCenter)
+        .fillMaxWidth()
+        .windowInsetsPadding(WindowInsets.safeDrawing)
+        .padding(bottom = 40.dp, start = 24.dp, end = 24.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+      if (isProcessing) {
+        CircularProgressIndicator(color = AppleBlue, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
+      }
+      Text(
+        text = statusText.ifEmpty { subtitle },
+        color = if (isError) AppleAmber else Color.White.copy(alpha = 0.85f),
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Medium,
+        textAlign = TextAlign.Center
+      )
+    }
+  }
+}
+
 fun getInitials(name: String?): String {
   if (name.isNullOrBlank()) return "👤"
   val parts = name.trim().split("\\s+".toRegex())
@@ -364,7 +546,7 @@ class MainActivity : ComponentActivity() {
     } else {
       KioskManager.disableKioskPolicies(this)
     }
-    KioskManager.grantCameraPermissionSilently(this)
+    KioskManager.grantExamVideoPermissionsSilently(this)
 
     setContent {
       val context = androidx.compose.ui.platform.LocalContext.current
@@ -687,6 +869,7 @@ fun KioskAppRoot(
   var showConfirmationDialog by remember { mutableStateOf(false) }
   var verifiedEmployeeResponse by remember { mutableStateOf<VerifyEmployeeResponse?>(null) }
   var isTogglingFaceId by remember { mutableStateOf(false) }
+  var faceIdCaptureMode by remember { mutableStateOf<FaceIdCaptureMode?>(null) }
   var examSendStatus by remember { mutableStateOf(ExamSendStatus.IDLE) }
   var examSendErrorMessage by remember { mutableStateOf("") }
 
@@ -699,9 +882,9 @@ fun KioskAppRoot(
   var videoRecordingElapsedSec by remember { mutableStateOf(0) }
 
   val examVideoPermissionLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.RequestPermission()
-  ) { granted ->
-    if (granted && currentScreen == KioskScreen.DASHBOARD && !isVideoRecording) {
+    contract = ActivityResultContracts.RequestMultiplePermissions()
+  ) { results ->
+    if (results.values.all { it } && currentScreen == KioskScreen.DASHBOARD && !isVideoRecording) {
       examVideoRecorder.start(lifecycleOwner)
       isVideoRecording = true
       videoRecordingStartMs = System.currentTimeMillis()
@@ -710,13 +893,16 @@ fun KioskAppRoot(
 
   LaunchedEffect(currentScreen) {
     if (currentScreen == KioskScreen.DASHBOARD && !isVideoRecording) {
-      val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+      val requiredPermissions = arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+      val granted = requiredPermissions.all {
+        context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED
+      }
       if (granted) {
         examVideoRecorder.start(lifecycleOwner)
         isVideoRecording = true
         videoRecordingStartMs = System.currentTimeMillis()
       } else {
-        examVideoPermissionLauncher.launch(Manifest.permission.CAMERA)
+        examVideoPermissionLauncher.launch(requiredPermissions)
       }
     }
   }
@@ -1190,16 +1376,22 @@ fun KioskAppRoot(
     }
   }
 
+  // Полноэкранный сканер лица (FaceIdScanScreen) вместо одиночного снимка системной камерой —
+  // faceIdCaptureMode переключает его между входом по Face ID и энролментом/отключением.
+  var faceScanStatusText by remember { mutableStateOf("") }
+  var faceScanIsError by remember { mutableStateOf(false) }
+
   fun handleVerifyFace(bitmap: android.graphics.Bitmap) {
     val base64Photo = bitmapToJpegDataUrl(bitmap)
     if (base64Photo == null) {
-      shakeTrigger += 1
-      pinErrorText = if (activeLanguage == AppLanguage.KAZAKH) "Суретті өңдеу мүмкін болмады" else "Не удалось обработать снимок"
+      faceScanIsError = true
+      faceScanStatusText = if (activeLanguage == AppLanguage.KAZAKH) "Суретті өңдеу мүмкін болмады" else "Не удалось обработать снимок"
       return
     }
     scope.launch {
       isVerifyingEmployee = true
-      pinErrorText = ""
+      faceScanIsError = false
+      faceScanStatusText = if (activeLanguage == AppLanguage.KAZAKH) "Тексерілуде..." else "Распознавание..."
       try {
         val response = withContext(Dispatchers.IO) {
           NexApiClient.service.verifyFace(
@@ -1215,14 +1407,15 @@ fun KioskAppRoot(
             positionName = response.getEffectivePosition().ifEmpty { null },
             photoUrl = response.getEffectivePhotoUrl()
           )
+          faceIdCaptureMode = null
           currentScreen = KioskScreen.CONFIRMATION
         } else {
-          shakeTrigger += 1
-          pinErrorText = if (activeLanguage == AppLanguage.KAZAKH) "Бет танылмады" else "Лицо не распознано"
+          faceScanIsError = true
+          faceScanStatusText = if (activeLanguage == AppLanguage.KAZAKH) "Бет танылмады, қайталап көріңіз" else "Лицо не распознано, попробуйте ещё раз"
         }
       } catch (e: Exception) {
-        shakeTrigger += 1
-        pinErrorText = ApiErrorText.fromThrowable(
+        faceScanIsError = true
+        faceScanStatusText = ApiErrorText.fromThrowable(
           throwable = e,
           lang = activeLanguage,
           operation = if (activeLanguage == AppLanguage.KAZAKH) {
@@ -1237,16 +1430,10 @@ fun KioskAppRoot(
     }
   }
 
-  val faceCameraLauncher = rememberLauncherForActivityResult(
-    contract = FrontCameraTakePicturePreview()
-  ) { bitmap -> if (bitmap != null) handleVerifyFace(bitmap) }
-  val faceCameraPermissionLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.RequestPermission()
-  ) { granted -> if (granted) faceCameraLauncher.launch(null) }
-
   fun launchFaceIdLogin() {
-    val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-    if (granted) faceCameraLauncher.launch(null) else faceCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    faceScanStatusText = ""
+    faceScanIsError = false
+    faceIdCaptureMode = FaceIdCaptureMode.LOGIN
   }
 
   // Энролмент/отключение Face ID — только по решению уже вошедшего сотрудника, на экране CONFIRMATION.
@@ -1255,6 +1442,8 @@ fun KioskAppRoot(
     val base64Photo = bitmapToJpegDataUrl(bitmap) ?: return
     scope.launch {
       isTogglingFaceId = true
+      faceScanIsError = false
+      faceScanStatusText = if (activeLanguage == AppLanguage.KAZAKH) "Тексерілуде..." else "Распознавание..."
       try {
         val response = withContext(Dispatchers.IO) {
           NexApiClient.service.enrollFace(
@@ -1263,8 +1452,14 @@ fun KioskAppRoot(
           )
         }
         verifiedEmployeeResponse = verifiedEmployeeResponse?.copy(faceIdEnabled = response.faceIdEnabled)
+        faceIdCaptureMode = null
       } catch (e: Exception) {
-        // Тихо игнорируем — сотрудник просто останется без Face ID и попробует снова
+        faceScanIsError = true
+        faceScanStatusText = ApiErrorText.fromThrowable(
+          throwable = e,
+          lang = activeLanguage,
+          operation = if (activeLanguage == AppLanguage.KAZAKH) "Face ID қосу мүмкін болмады" else "Не удалось включить Face ID"
+        )
       } finally {
         isTogglingFaceId = false
       }
@@ -1291,16 +1486,10 @@ fun KioskAppRoot(
     }
   }
 
-  val enrollFaceCameraLauncher = rememberLauncherForActivityResult(
-    contract = FrontCameraTakePicturePreview()
-  ) { bitmap -> if (bitmap != null) handleEnrollFace(bitmap) }
-  val enrollFaceCameraPermissionLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.RequestPermission()
-  ) { granted -> if (granted) enrollFaceCameraLauncher.launch(null) }
-
   fun launchEnrollFace() {
-    val granted = context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
-    if (granted) enrollFaceCameraLauncher.launch(null) else enrollFaceCameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    faceScanStatusText = ""
+    faceScanIsError = false
+    faceIdCaptureMode = FaceIdCaptureMode.ENROLL
   }
 
   fun resetAllWorkflowData() {
@@ -1610,7 +1799,7 @@ fun KioskAppRoot(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp),
           modifier = Modifier
-            .align(Alignment.TopStart)
+            .align(Alignment.TopCenter)
             .padding(16.dp)
             .background(Color.Black.copy(alpha = 0.55f), RoundedCornerShape(20.dp))
             .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1709,6 +1898,25 @@ fun KioskAppRoot(
             updateDownloadProgress = null
             updateErrorText = null
           }
+        )
+      }
+
+      val captureMode = faceIdCaptureMode
+      if (captureMode != null) {
+        FaceIdScanScreen(
+          title = if (activeLanguage == AppLanguage.KAZAKH) "Face ID" else "Face ID",
+          subtitle = if (captureMode == FaceIdCaptureMode.LOGIN) {
+            if (activeLanguage == AppLanguage.KAZAKH) "Бетіңізді сопаққа сыйдырып, түймені басыңыз" else "Расположите лицо в овале и нажмите кнопку"
+          } else {
+            if (activeLanguage == AppLanguage.KAZAKH) "Face ID қосу үшін бетіңізді суретке түсіріңіз" else "Снимок для включения Face ID"
+          },
+          isProcessing = if (captureMode == FaceIdCaptureMode.LOGIN) isVerifyingEmployee else isTogglingFaceId,
+          statusText = faceScanStatusText,
+          isError = faceScanIsError,
+          onCapture = { bitmap ->
+            if (captureMode == FaceIdCaptureMode.LOGIN) handleVerifyFace(bitmap) else handleEnrollFace(bitmap)
+          },
+          onCancel = { faceIdCaptureMode = null }
         )
       }
     }
@@ -3586,7 +3794,7 @@ fun Step3Breathalyzer(
             text = when {
               dingoMeasuring.value -> dingoStatus.value
               dingoConnected.value -> if (lang == AppLanguage.KAZAKH) "Нажмите 'Бастау' — дуйте в мундштук" else "Нажмите кнопку ниже и дуйте в мундштук"
-              DingoSerialManager.isDeviceAvailable(context) -> if (lang == AppLanguage.KAZAKH) "Устройство табылды. Іске қосу үшін батырманы басыңыз" else "Устройство найдено. Нажмите кнопку — Android запросит разрешение"
+              DingoSerialManager.isDeviceAvailable(context) -> if (lang == AppLanguage.KAZAKH) "Құрылғы табылды. Іске қосу үшін батырманы басыңыз" else "Устройство найдено. Нажмите кнопку — Android запросит разрешение"
               else -> if (lang == AppLanguage.KAZAKH) "USB кабелін қосыңыз (Dingo E-200)" else "Подключите USB кабель (Dingo E-200)"
             },
             color = AppleMutedGrey,
@@ -4890,7 +5098,7 @@ fun getDeterministicBranch(name: String?, lang: AppLanguage): String {
   val branches = listOf(
     Trans("Алматинский Локомотивный филиал", "Алматы Локомотив филиалы"),
     Trans("Астанинский Терминал", "Астана Бас Терминалы"),
-    Trans("Карагандинский транспортный хаб", "Қарағанды Кен филиалы")
+    Trans("Карагандинский транспортный хаб", "Қарағанды көлік хабы")
   )
   val index = kotlin.math.abs(hashCode) % branches.size
   return branches[index].get(lang)
@@ -5106,6 +5314,71 @@ fun RegistrationScreen(
   var showSuccessDialog by remember { mutableStateOf(false) }
   var showIdSavedConfirmDialog by remember { mutableStateOf(false) }
   var registeredIdResult by remember { mutableStateOf("") }
+
+  // Face ID — отдельный шаг после успешной регистрации: сотрудник сам решает,
+  // включать его или нет, и это не смешивается с обычным фото профиля.
+  var showFaceIdOfferDialog by remember { mutableStateOf(false) }
+  var showFaceIdEnrollStep by remember { mutableStateOf(false) }
+  var isEnrollingFace by remember { mutableStateOf(false) }
+  var faceEnrollStatusText by remember { mutableStateOf("") }
+  var faceEnrollIsError by remember { mutableStateOf(false) }
+
+  fun finishRegistration() {
+    val posName = if (lang == AppLanguage.KAZAKH && !selectedPos?.nameKk.isNullOrBlank()) selectedPos?.nameKk!! else (selectedPos?.name ?: "")
+    val photoDataUri = capturedPhoto?.let { bitmapToJpegDataUrl(it) } ?: ""
+    onSuccess(
+      registeredIdResult,
+      fullName,
+      selectedOrg?.name ?: "",
+      selectedBranch?.name ?: "",
+      posName,
+      photoDataUri
+    )
+  }
+
+  fun handleRegistrationFaceEnroll(bitmap: android.graphics.Bitmap) {
+    val base64Photo = bitmapToJpegDataUrl(bitmap) ?: return
+    scope.launch {
+      isEnrollingFace = true
+      faceEnrollIsError = false
+      faceEnrollStatusText = if (lang == AppLanguage.KAZAKH) "Тексерілуде..." else "Распознавание..."
+      try {
+        withContext(Dispatchers.IO) {
+          NexApiClient.service.enrollFace(
+            deviceToken = NexApiClient.deviceToken,
+            request = EnrollFaceRequest(employeeId = registeredIdResult, facePhoto = base64Photo)
+          )
+        }
+        showFaceIdEnrollStep = false
+        finishRegistration()
+      } catch (e: Exception) {
+        faceEnrollIsError = true
+        faceEnrollStatusText = ApiErrorText.fromThrowable(
+          throwable = e,
+          lang = lang,
+          operation = if (lang == AppLanguage.KAZAKH) "Face ID қосу мүмкін болмады" else "Не удалось включить Face ID"
+        )
+      } finally {
+        isEnrollingFace = false
+      }
+    }
+  }
+
+  if (showFaceIdEnrollStep) {
+    FaceIdScanScreen(
+      title = "Face ID",
+      subtitle = if (lang == AppLanguage.KAZAKH) "Face ID қосу үшін бетіңізді суретке түсіріңіз" else "Снимок для включения Face ID",
+      isProcessing = isEnrollingFace,
+      statusText = faceEnrollStatusText,
+      isError = faceEnrollIsError,
+      onCapture = { bitmap -> handleRegistrationFaceEnroll(bitmap) },
+      onCancel = {
+        showFaceIdEnrollStep = false
+        finishRegistration()
+      }
+    )
+    return
+  }
   
   Column(
     modifier = Modifier
@@ -5131,7 +5404,7 @@ fun RegistrationScreen(
         Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = AppleBlue)
       }
       Text(
-        text = Trans("РЕГИСТРАЦИЯ НОВОГО СОТРУДНИКА", "ЖАҢА ҚЫЗМЕНТКЕРДІ ТІРКЕУ").get(lang),
+        text = Trans("РЕГИСТРАЦИЯ НОВОГО СОТРУДНИКА", "ЖАҢА ҚЫЗМЕТКЕРДІ ТІРКЕУ").get(lang),
         color = AppleLightGrey,
         fontSize = 18.sp,
         fontWeight = FontWeight.Bold,
@@ -5593,7 +5866,7 @@ fun RegistrationScreen(
             Text(
               text = Trans(
                 "⚠ ОБЯЗАТЕЛЬНО ЗАПИШИТЕ ИЛИ ЗАПОМНИТЕ ЭТОТ ID — он понадобится для входа и прохождения следующих медосмотров.",
-                "⚠ БҰЛ ID-ДІ МІНДЕТТІ ТҮРДЕ ЖАЗЫП АЛЫҢЫЗ НЕМЕСЕ ЕСТЕ САҚТАҢЫЗ — ол келесі кіру және медосмотрдан өту үшін қажет болады."
+                "⚠ БҰЛ ID-ДІ МІНДЕТТІ ТҮРДЕ ЖАЗЫП АЛЫҢЫЗ НЕМЕСЕ ЕСТЕ САҚТАҢЫЗ — ол келесі кіру және медтексеруден өту үшін қажет болады."
               ).get(lang),
               color = AppleAmber,
               fontSize = 12.sp,
@@ -5609,7 +5882,7 @@ fun RegistrationScreen(
             shape = RoundedCornerShape(12.dp)
           ) {
             Text(
-              text = Trans("Начать осмотр", "Осмотрды бастау").get(lang),
+              text = Trans("Начать осмотр", "Медтексеруді бастау").get(lang),
               fontWeight = FontWeight.Bold,
               fontSize = 15.sp,
               color = Color.White
@@ -5636,7 +5909,7 @@ fun RegistrationScreen(
           Text(
             text = Trans(
               "Вы уверены, что сохранили свой ID сотрудника? Без него вы не сможете войти для следующего медосмотра.",
-              "Қызметкер ID-іңізді сақтап алғаныңызға сенімдісіз бе? Ол болмаса келесі медосмотрға кіре алмайсыз."
+              "Қызметкер ID-іңізді сақтап алғаныңызға сенімдісіз бе? Ол болмаса келесі медтексеруге кіре алмайсыз."
             ).get(lang),
             color = AppleLightGrey.copy(alpha = 0.8f),
             fontSize = 14.sp,
@@ -5648,20 +5921,7 @@ fun RegistrationScreen(
             onClick = {
               showIdSavedConfirmDialog = false
               showSuccessDialog = false
-              val posName = if (lang == AppLanguage.KAZAKH && !selectedPos?.nameKk.isNullOrBlank()) selectedPos?.nameKk!! else (selectedPos?.name ?: "")
-              val photoDataUri = capturedPhoto?.let { bmp ->
-                val stream = java.io.ByteArrayOutputStream()
-                bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
-                "data:image/jpeg;base64," + android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
-              } ?: ""
-              onSuccess(
-                registeredIdResult,
-                fullName,
-                selectedOrg?.name ?: "",
-                selectedBranch?.name ?: "",
-                posName,
-                photoDataUri
-              )
+              showFaceIdOfferDialog = true
             },
             colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
             shape = RoundedCornerShape(12.dp)
@@ -5677,6 +5937,58 @@ fun RegistrationScreen(
             shape = RoundedCornerShape(12.dp)
           ) {
             Text(Trans("Нет, показать снова", "Жоқ, қайта көрсет").get(lang), fontWeight = FontWeight.Bold)
+          }
+        },
+        containerColor = AppleCharcoal,
+        shape = RoundedCornerShape(24.dp)
+      )
+    }
+
+    if (showFaceIdOfferDialog) {
+      androidx.compose.material3.AlertDialog(
+        onDismissRequest = {},
+        title = {
+          Text(
+            text = "Face ID",
+            fontWeight = FontWeight.Bold,
+            color = AppleLightGrey,
+            fontSize = 20.sp
+          )
+        },
+        text = {
+          Text(
+            text = Trans(
+              "Хотите включить вход по Face ID? Тогда в следующий раз можно будет пройти осмотр без ввода ID — на любом киоске.",
+              "Face ID арқылы кіруді қосқыңыз келе ме? Онда келесі жолы кез келген киоскіде ID енгізбей-ақ өтуге болады."
+            ).get(lang),
+            color = AppleLightGrey.copy(alpha = 0.8f),
+            fontSize = 14.sp,
+            textAlign = TextAlign.Center
+          )
+        },
+        confirmButton = {
+          Button(
+            onClick = {
+              showFaceIdOfferDialog = false
+              showFaceIdEnrollStep = true
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Text(Trans("Включить Face ID", "Face ID қосу").get(lang), fontWeight = FontWeight.Bold, color = Color.White)
+          }
+        },
+        dismissButton = {
+          OutlinedButton(
+            onClick = {
+              showFaceIdOfferDialog = false
+              finishRegistration()
+            },
+            border = BorderStroke(1.dp, AppleBorderColor),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = AppleLightGrey),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Text(Trans("Пропустить", "Өткізіп жіберу").get(lang), fontWeight = FontWeight.Bold)
           }
         },
         containerColor = AppleCharcoal,
@@ -6978,7 +7290,7 @@ fun SettingsScreen(
               fontSize = 14.sp
             )
             Text(
-              text = if (activeLanguage == AppLanguage.KAZAKH) "Сопряжение жасау және таңдау үшін сканерлеңіз" else "Запустите сканирование пространства для сопряжения",
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Жұптау жасау және таңдау үшін сканерлеңіз" else "Запустите сканирование пространства для сопряжения",
               color = AppleMutedGrey,
               fontSize = 12.sp
             )

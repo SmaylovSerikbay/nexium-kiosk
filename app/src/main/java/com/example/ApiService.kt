@@ -368,7 +368,7 @@ object NexApiClient {
             .create(NexApiService::class.java)
     }
 
-    var deviceToken: String = "nxt_ffef03614a104bacde146715fcc2d518847adfc39f8a32d79aff28b8f2f368e4"
+    var deviceToken: String = ""
         private set
 
     fun updateDeviceToken(token: String) {
@@ -380,15 +380,6 @@ object NexApiClient {
         val savedToken = prefs.getString("device_token", null)
         if (!savedToken.isNullOrEmpty()) {
             deviceToken = savedToken
-        } else {
-            try {
-                val buildConfigToken = BuildConfig.NEX_DEVICE_TOKEN
-                if (buildConfigToken.isNotEmpty()) {
-                    deviceToken = buildConfigToken
-                }
-            } catch (e: Throwable) {
-                // Keep default hardcoded token if BuildConfig fails
-            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.example
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
 import androidx.camera.core.CameraSelector
@@ -18,8 +19,10 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
- * Пишет процесс осмотра на фронтальную камеру без предпросмотра (только VideoCapture,
- * без Preview use case) и без звука. Файл отдаётся на отправку после стоп-события.
+ * Пишет процесс осмотра на фронтальную камеру со звуком, без предпросмотра
+ * (только VideoCapture, без Preview use case). Файл отдаётся на отправку после
+ * стоп-события. Разрешение RECORD_AUDIO должно быть выдано до вызова start()
+ * (см. KioskManager.grantExamVideoPermissionsSilently).
  */
 class ExamVideoRecorder(private val context: Context) {
   private var cameraProvider: ProcessCameraProvider? = null
@@ -29,6 +32,7 @@ class ExamVideoRecorder(private val context: Context) {
   var outputFile: File? = null
     private set
 
+  @SuppressLint("MissingPermission")
   fun start(lifecycleOwner: LifecycleOwner) {
     if (activeRecording != null) return
     val future = ProcessCameraProvider.getInstance(context)
@@ -50,6 +54,7 @@ class ExamVideoRecorder(private val context: Context) {
 
         activeRecording = capture.output
           .prepareRecording(context, FileOutputOptions.Builder(file).build())
+          .withAudioEnabled()
           .start(ContextCompat.getMainExecutor(context)) { event ->
             if (event is VideoRecordEvent.Finalize) {
               if (event.hasError()) {

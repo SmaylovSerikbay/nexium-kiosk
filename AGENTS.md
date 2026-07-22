@@ -6,6 +6,8 @@ This is a single-module Android application built with Kotlin and Jetpack Compos
 
 Local JVM tests are in `app/src/test/java/`; screenshot baselines are stored in `app/src/test/screenshots/`. On-device tests live in `app/src/androidTest/java/`. Treat `MicrolifeSDK-Android-V3.0.7-260206V1r/` as vendor reference material; the application consumes its AAR from `app/libs/`.
 
+The corresponding Go backend is at `/home/ubuntu/Documents/projectsgo/nexium`. Check its request structs, handlers, and models when changing API contracts.
+
 ## Build, Test, and Development Commands
 
 The repository includes a Windows Gradle wrapper. Run these from the project root:

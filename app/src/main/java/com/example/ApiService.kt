@@ -128,6 +128,7 @@ data class DisableFaceRequest(
 data class CreateExamRequest(
     @Json(name = "employee_id") val employeeId: String,
     @Json(name = "device_id") val deviceId: Int,
+    @Json(name = "type_status") val typeStatus: String,
     @Json(name = "systolic") val systolic: Int,
     @Json(name = "diastolic") val diastolic: Int,
     @Json(name = "pulse") val pulse: Int,

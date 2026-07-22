@@ -98,6 +98,7 @@ enum class KioskScreen {
   AUTHORIZATION,
   REGISTRATION,
   CONFIRMATION,
+  EXAM_TYPE_SELECTION,
   DASHBOARD,
   SETTINGS
 }
@@ -870,6 +871,7 @@ fun KioskAppRoot(
   var faceIdCaptureMode by remember { mutableStateOf<FaceIdCaptureMode?>(null) }
   var examSendStatus by remember { mutableStateOf(ExamSendStatus.IDLE) }
   var examSendErrorMessage by remember { mutableStateOf("") }
+  var selectedExamType by remember { mutableStateOf("") }
 
   // Запись видео осмотра: стартует при входе в кабинет сотрудника, останавливается
   // и отправляется на бэкенд в момент нажатия "Отправить".
@@ -1146,6 +1148,7 @@ fun KioskAppRoot(
     val request = CreateExamRequest(
       employeeId = profileId,
       deviceId = 4,
+      typeStatus = selectedExamType,
       systolic = bpSystolic ?: 120,
       diastolic = bpDiastolic ?: 80,
       pulse = heartRateValue ?: 70,
@@ -1505,6 +1508,7 @@ fun KioskAppRoot(
     selectedComplaintsList = emptyList()
     plainComplaintsState = null
     currentStep = StepState.HEALTH_COMPLAINTS
+    selectedExamType = ""
     enteredPin = ""
     pinErrorText = ""
     currentScreen = KioskScreen.LANGUAGE_SELECTION
@@ -1529,6 +1533,10 @@ fun KioskAppRoot(
         enteredPin = ""
         verifiedEmployeeResponse = null
         currentScreen = KioskScreen.AUTHORIZATION
+      }
+      KioskScreen.EXAM_TYPE_SELECTION -> {
+        selectedExamType = ""
+        currentScreen = KioskScreen.CONFIRMATION
       }
       KioskScreen.AUTHORIZATION -> {
         enteredPin = ""
@@ -1631,7 +1639,7 @@ fun KioskAppRoot(
                     photoUrl = resp.getEffectivePhotoUrl(),
                     position = resp.getEffectivePosition(activeLanguage == AppLanguage.KAZAKH)
                   )
-                  currentScreen = KioskScreen.DASHBOARD
+                  currentScreen = KioskScreen.EXAM_TYPE_SELECTION
                 },
                 onDismiss = {
                   enteredPin = ""
@@ -1646,9 +1654,22 @@ fun KioskAppRoot(
               currentScreen = KioskScreen.AUTHORIZATION
             }
           }
+          KioskScreen.EXAM_TYPE_SELECTION -> {
+            ExamTypeSelectionScreen(
+              onStart = { examType ->
+                selectedExamType = examType
+                currentScreen = KioskScreen.DASHBOARD
+              },
+              onBack = {
+                selectedExamType = ""
+                currentScreen = KioskScreen.CONFIRMATION
+              }
+            )
+          }
           KioskScreen.DASHBOARD -> {
             KioskDashboard(
               profile = currentEmployeeProfile ?: defaultEmployeeProfile,
+              examType = selectedExamType,
               metrics = metrics,
               currentStep = currentStep,
               selectedComplaints = selectedComplaintsList,
@@ -1781,7 +1802,7 @@ fun KioskAppRoot(
         }
       }
 
-      if (currentScreen != KioskScreen.SETTINGS && currentScreen != KioskScreen.REGISTRATION && currentScreen != KioskScreen.CONFIRMATION) {
+      if (currentScreen != KioskScreen.SETTINGS && currentScreen != KioskScreen.REGISTRATION && currentScreen != KioskScreen.CONFIRMATION && currentScreen != KioskScreen.EXAM_TYPE_SELECTION) {
         IconButton(
           onClick = { currentScreen = KioskScreen.SETTINGS },
           modifier = Modifier
@@ -2336,6 +2357,7 @@ fun AuthorizationGate(
 @Composable
 fun KioskDashboard(
   profile: EmployeeProfile,
+  examType: String,
   metrics: List<MetricState>,
   currentStep: StepState,
   selectedComplaints: List<String>,
@@ -2419,7 +2441,7 @@ fun KioskDashboard(
         .fillMaxHeight(),
       verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-      EmployeeProfileCard(profile = profile)
+      EmployeeProfileCard(profile = profile, examType = examType)
 
       Text(
         text = AppText.systemStatus.get(lang),
@@ -2590,7 +2612,11 @@ fun KioskDashboard(
 // BLOCK 1: Profile Card Component (Spacious & Prominent)
 // ==========================================
 @Composable
-fun EmployeeProfileCard(profile: EmployeeProfile, modifier: Modifier = Modifier) {
+fun EmployeeProfileCard(
+  profile: EmployeeProfile,
+  examType: String = "",
+  modifier: Modifier = Modifier
+) {
   val lang = LocalAppLanguage.current
   val isDark = LocalDarkTheme.current
   Card(
@@ -2689,6 +2715,15 @@ fun EmployeeProfileCard(profile: EmployeeProfile, modifier: Modifier = Modifier)
             fontSize = 12.sp,
             fontWeight = FontWeight.Medium,
             letterSpacing = 0.1.sp
+          )
+        }
+
+        if (examType.isNotEmpty()) {
+          Text(
+            text = if (lang == AppLanguage.KAZAKH) "Тексеру түрі: $examType" else "Тип осмотра: $examType",
+            color = AppleGreen,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
           )
         }
         
@@ -5013,6 +5048,104 @@ fun ConfirmationScreen(
             letterSpacing = 0.5.sp
           )
         }
+      }
+    }
+  }
+}
+
+@Composable
+fun ExamTypeSelectionScreen(
+  onStart: (String) -> Unit,
+  onBack: () -> Unit
+) {
+  val lang = LocalAppLanguage.current
+  var selected by remember { mutableStateOf<String?>(null) }
+  val types = listOf(
+    "Предсменный" to if (lang == AppLanguage.KAZAKH) "Ауысым алдындағы" else "Предсменный",
+    "Послесменный" to if (lang == AppLanguage.KAZAKH) "Ауысымнан кейінгі" else "Послесменный"
+  )
+
+  Column(
+    modifier = Modifier
+      .fillMaxSize()
+      .windowInsetsPadding(WindowInsets.safeDrawing)
+      .padding(32.dp),
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.SpaceBetween
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text(
+        text = if (lang == AppLanguage.KAZAKH) "ТЕКСЕРУ ТҮРІН ТАҢДАҢЫЗ" else "ВЫБЕРИТЕ ТИП ОСМОТРА",
+        color = AppleLightGrey,
+        fontSize = 26.sp,
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 1.sp
+      )
+      Spacer(modifier = Modifier.height(8.dp))
+      Text(
+        text = if (lang == AppLanguage.KAZAKH) "Өлшеулер басталғаннан кейін түрін өзгерту мүмкін емес" else "После начала измерений тип изменить нельзя",
+        color = AppleMutedGrey,
+        fontSize = 14.sp
+      )
+    }
+
+    Row(
+      modifier = Modifier.fillMaxWidth(0.8f),
+      horizontalArrangement = Arrangement.spacedBy(24.dp)
+    ) {
+      types.forEach { (apiValue, title) ->
+        val isSelected = selected == apiValue
+        Card(
+          shape = RoundedCornerShape(24.dp),
+          border = BorderStroke(2.dp, if (isSelected) AppleBlue else AppleBorderColor),
+          colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) AppleBlue.copy(alpha = 0.12f) else AppleCharcoal.copy(alpha = 0.6f)
+          ),
+          modifier = Modifier
+            .weight(1f)
+            .height(180.dp)
+            .clickable { selected = apiValue }
+            .testTag("exam_type_${apiValue.lowercase()}")
+        ) {
+          Column(
+            modifier = Modifier.fillMaxSize().padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+          ) {
+            Icon(
+              imageVector = if (apiValue == "Предсменный") Icons.Default.Login else Icons.Default.Logout,
+              contentDescription = null,
+              tint = if (isSelected) AppleBlue else AppleMutedGrey,
+              modifier = Modifier.size(42.dp)
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+              text = title,
+              color = AppleLightGrey,
+              fontSize = 20.sp,
+              fontWeight = FontWeight.Bold
+            )
+          }
+        }
+      }
+    }
+
+    Row(
+      modifier = Modifier.fillMaxWidth(0.8f).height(64.dp),
+      horizontalArrangement = Arrangement.spacedBy(20.dp)
+    ) {
+      OutlinedButton(onClick = onBack, modifier = Modifier.weight(1f).fillMaxHeight()) {
+        Text(if (lang == AppLanguage.KAZAKH) "АРТҚА" else "НАЗАД")
+      }
+      Button(
+        onClick = { selected?.let(onStart) },
+        enabled = selected != null,
+        modifier = Modifier.weight(1.4f).fillMaxHeight().testTag("start_exam_button")
+      ) {
+        Text(
+          text = if (lang == AppLanguage.KAZAKH) "ТЕКСЕРУДІ БАСТАУ" else "НАЧАТЬ ОСМОТР",
+          fontWeight = FontWeight.Bold
+        )
       }
     }
   }

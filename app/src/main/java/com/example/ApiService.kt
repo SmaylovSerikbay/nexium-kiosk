@@ -344,6 +344,8 @@ interface NexApiService {
 }
 
 object NexApiClient {
+    const val DEFAULT_BASE_URL = "https://nexium-health.com/api/"
+
     private val loggingInterceptor = HttpLoggingInterceptor().apply {
         level = HttpLoggingInterceptor.Level.BODY
     }
@@ -355,19 +357,33 @@ object NexApiClient {
         .writeTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    val service: NexApiService by lazy {
-        val baseUrl = try {
-            BuildConfig.NEX_API_BASE_URL
-        } catch (e: Throwable) {
-            "https://nexium-health.com/api/"
-        }
-        
-        Retrofit.Builder()
-            .baseUrl(baseUrl)
+    private fun buildService(url: String): NexApiService {
+        return Retrofit.Builder()
+            .baseUrl(url)
             .client(okHttpClient)
             .addConverterFactory(MoshiConverterFactory.create())
             .build()
             .create(NexApiService::class.java)
+    }
+
+    /** Строит отдельный сервис на кандидатный URL, не трогая текущий [service] — для проверки перед сохранением. */
+    fun buildTemporaryService(url: String): NexApiService = buildService(normalizeBaseUrl(url))
+
+    private fun normalizeBaseUrl(url: String): String = if (url.endsWith("/")) url else "$url/"
+
+    var baseUrl: String = try {
+        BuildConfig.NEX_API_BASE_URL
+    } catch (e: Throwable) {
+        DEFAULT_BASE_URL
+    }
+        private set
+
+    var service: NexApiService = buildService(baseUrl)
+        private set
+
+    fun setBaseUrl(url: String) {
+        baseUrl = normalizeBaseUrl(url)
+        service = buildService(baseUrl)
     }
 
     var deviceToken: String = ""
@@ -382,6 +398,10 @@ object NexApiClient {
         val savedToken = prefs.getString("device_token", null)
         if (!savedToken.isNullOrEmpty()) {
             deviceToken = savedToken
+        }
+        val savedBaseUrl = prefs.getString("api_base_url", null)
+        if (!savedBaseUrl.isNullOrEmpty()) {
+            setBaseUrl(savedBaseUrl)
         }
     }
 }

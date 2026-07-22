@@ -779,6 +779,7 @@ fun KioskAppRoot(
   val settingsPrefs = remember(context) { context.getSharedPreferences("nex_settings", android.content.Context.MODE_PRIVATE) }
 
   var deviceToken by remember { mutableStateOf(NexApiClient.deviceToken) }
+  var apiBaseUrl by remember { mutableStateOf(NexApiClient.baseUrl) }
   var tokenInfo by remember { mutableStateOf<TokenInfoResponse?>(null) }
   var tokenInfoError by remember { mutableStateOf("") }
   var isFetchingTokenInfo by remember { mutableStateOf(false) }
@@ -1151,7 +1152,7 @@ fun KioskAppRoot(
       breathalyzer = if (breathalyzerValue == null || breathalyzerValue!! <= 0.0) "Пройден" else "Не пройден",
       temperature = temperatureValue ?: 36.6,
       complaints = if (hasComplaints) "Да" else "Нет",
-      drugTest = "Пройден",
+      drugTest = "Не предусмотрено",
       deviceDopusk = deviceDopuskStr,
       priceCharged = 0.0
     )
@@ -1731,6 +1732,7 @@ fun KioskAppRoot(
               tokenInfo = tokenInfo,
               tokenInfoError = tokenInfoError,
               isFetchingTokenInfo = isFetchingTokenInfo,
+              apiBaseUrl = apiBaseUrl,
               kioskModeEnabled = kioskModeEnabled,
               onKioskModeToggle = onKioskModeToggle,
               onSaveDevice = { type, mode, mac, name ->
@@ -1761,6 +1763,11 @@ fun KioskAppRoot(
                 settingsPrefs.edit().putString("device_token", newToken).apply()
                 NexApiClient.updateDeviceToken(newToken)
                 deviceToken = newToken
+              },
+              onSaveBaseUrl = { newBaseUrl: String ->
+                settingsPrefs.edit().putString("api_base_url", newBaseUrl).apply()
+                NexApiClient.setBaseUrl(newBaseUrl)
+                apiBaseUrl = NexApiClient.baseUrl
               },
               onBack = {
                 if (currentEmployeeProfile != null) {
@@ -6343,6 +6350,9 @@ object OmronBleManager {
   }
 }
 
+// Единый пароль для административных действий в настройках: отключение режима киоска, смена API URL.
+private const val ADMIN_ACTION_PASSWORD = "Nex2026"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -6360,10 +6370,12 @@ fun SettingsScreen(
   tokenInfo: TokenInfoResponse?,
   tokenInfoError: String,
   isFetchingTokenInfo: Boolean,
+  apiBaseUrl: String,
   kioskModeEnabled: Boolean,
   onKioskModeToggle: (Boolean) -> Unit,
   onSaveDevice: (type: String, mode: String, mac: String, name: String) -> Unit,
   onSaveToken: (String) -> Unit,
+  onSaveBaseUrl: (String) -> Unit,
   onBack: () -> Unit
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
@@ -6375,7 +6387,12 @@ fun SettingsScreen(
   var scanErrorText by remember { mutableStateOf("") }
   var selectedDeviceForBinding by remember { mutableStateOf<MockBluetoothDevice?>(null) }
   var showOmronPairingDialog by remember { mutableStateOf(false) }
-  var showKioskPasswordDialog by remember { mutableStateOf(false) }
+  // Пароль (тот же, что при отключении режима киоска) требуется для любого административного
+  // действия: выключение киоска, смена API URL. pendingAdminAction хранит, что выполнить после
+  // верного пароля.
+  var pendingAdminAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+  var pendingAdminActionLabelRu by remember { mutableStateOf("") }
+  var pendingAdminActionLabelKk by remember { mutableStateOf("") }
 
   val permissionLauncher = rememberLauncherForActivityResult(
     contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -6644,9 +6661,11 @@ fun SettingsScreen(
           
           Switch(
             checked = kioskModeEnabled,
-            onCheckedChange = { 
+            onCheckedChange = {
               if (!it) {
-                showKioskPasswordDialog = true
+                pendingAdminActionLabelRu = "Введите пароль для отключения режима киоска:"
+                pendingAdminActionLabelKk = "Киоск режимін өшіру үшін парольді енгізіңіз:"
+                pendingAdminAction = { onKioskModeToggle(false) }
               } else {
                 onKioskModeToggle(true)
               }
@@ -6662,23 +6681,23 @@ fun SettingsScreen(
       }
     }
 
-    if (showKioskPasswordDialog) {
+    if (pendingAdminAction != null) {
       var passInput by remember { mutableStateOf("") }
       var passError by remember { mutableStateOf(false) }
-      
+
       androidx.compose.material3.AlertDialog(
-        onDismissRequest = { showKioskPasswordDialog = false },
-        title = { 
+        onDismissRequest = { pendingAdminAction = null },
+        title = {
           Text(
             text = if (activeLanguage == AppLanguage.KAZAKH) "Кіруді растау" else "Подтверждение доступа",
             color = AppleLightGrey,
             fontWeight = FontWeight.Bold
-          ) 
+          )
         },
         text = {
           Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-              text = if (activeLanguage == AppLanguage.KAZAKH) "Киоск режимін өшіру үшін парольді енгізіңіз:" else "Введите пароль для отключения режима киоска:",
+              text = if (activeLanguage == AppLanguage.KAZAKH) pendingAdminActionLabelKk else pendingAdminActionLabelRu,
               color = AppleMutedGrey
             )
             OutlinedTextField(
@@ -6708,9 +6727,10 @@ fun SettingsScreen(
         confirmButton = {
           Button(
             onClick = {
-              if (passInput == "Nex2026") {
-                onKioskModeToggle(false)
-                showKioskPasswordDialog = false
+              if (passInput == ADMIN_ACTION_PASSWORD) {
+                val action = pendingAdminAction
+                pendingAdminAction = null
+                action?.invoke()
               } else {
                 passError = true
               }
@@ -6721,7 +6741,7 @@ fun SettingsScreen(
           }
         },
         dismissButton = {
-          TextButton(onClick = { showKioskPasswordDialog = false }) {
+          TextButton(onClick = { pendingAdminAction = null }) {
             Text(
               text = if (activeLanguage == AppLanguage.KAZAKH) "Болдырмау" else "Отмена",
               color = AppleLightGrey
@@ -6899,6 +6919,124 @@ fun SettingsScreen(
                 Text(if (activeLanguage == AppLanguage.KAZAKH) "Бас тарту" else "Отмена")
               }
             }
+          }
+        }
+      }
+    }
+
+    Card(
+      shape = RoundedCornerShape(18.dp),
+      border = BorderStroke(1.dp, AppleBorderColor),
+      colors = CardDefaults.cardColors(containerColor = if (isDark) AppleCharcoal else Color.White),
+      modifier = Modifier.fillMaxWidth()
+    ) {
+      Column(modifier = Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        var urlInput by remember { mutableStateOf(apiBaseUrl) }
+        var isEditingUrl by remember { mutableStateOf(false) }
+        var isValidatingUrl by remember { mutableStateOf(false) }
+        var newUrlError by remember { mutableStateOf("") }
+
+        fun validateAndSaveUrl(candidate: String) {
+          val trimmed = candidate.trim()
+          if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
+            newUrlError = if (activeLanguage == AppLanguage.KAZAKH) {
+              "Адрес http:// немесе https:// бастауы керек"
+            } else {
+              "Адрес должен начинаться с http:// или https://"
+            }
+            return
+          }
+          if (deviceToken.isEmpty()) {
+            newUrlError = if (activeLanguage == AppLanguage.KAZAKH) {
+              "Алдымен құрылғы токенін орнатыңыз"
+            } else {
+              "Сначала настройте токен устройства — без него адрес нельзя проверить"
+            }
+            return
+          }
+          pendingAdminActionLabelRu = "Введите пароль для смены адреса API:"
+          pendingAdminActionLabelKk = "API мекенжайын өзгерту үшін парольді енгізіңіз:"
+          pendingAdminAction = {
+            scope.launch {
+              isValidatingUrl = true
+              newUrlError = ""
+              try {
+                val response = withContext(Dispatchers.IO) {
+                  NexApiClient.buildTemporaryService(trimmed).getCurrentTokenInfo(deviceToken)
+                }
+                if (response.isSuccessful) {
+                  onSaveBaseUrl(trimmed)
+                  isEditingUrl = false
+                } else {
+                  newUrlError = ApiErrorText.fromHttp(response.code(), response.errorBody()?.string(), activeLanguage)
+                }
+              } catch (e: Exception) {
+                newUrlError = ApiErrorText.fromThrowable(e, activeLanguage)
+              } finally {
+                isValidatingUrl = false
+              }
+            }
+          }
+        }
+
+        Text(
+          text = if (activeLanguage == AppLanguage.KAZAKH) "API серверінің мекенжайы" else "Адрес API-сервера",
+          color = AppleLightGrey,
+          fontWeight = FontWeight.Bold,
+          fontSize = 16.sp
+        )
+
+        if (!isEditingUrl) {
+          Text(text = apiBaseUrl, color = AppleMutedGrey, fontSize = 13.sp)
+          OutlinedButton(
+            onClick = { urlInput = apiBaseUrl; newUrlError = ""; isEditingUrl = true },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp)
+          ) {
+            Text(if (activeLanguage == AppLanguage.KAZAKH) "Мекенжайды өзгерту" else "Изменить адрес")
+          }
+        } else {
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            OutlinedTextField(
+              value = urlInput,
+              onValueChange = { urlInput = it; newUrlError = "" },
+              placeholder = { Text("https://...") },
+              modifier = Modifier.weight(1f),
+              colors = OutlinedTextFieldDefaults.colors(
+                focusedBorderColor = AppleBlue,
+                unfocusedBorderColor = AppleBorderColor,
+                focusedTextColor = AppleLightGrey,
+                unfocusedTextColor = AppleLightGrey
+              ),
+              singleLine = true,
+              enabled = !isValidatingUrl
+            )
+
+            Button(
+              onClick = { validateAndSaveUrl(urlInput) },
+              enabled = urlInput.isNotBlank() && !isValidatingUrl,
+              colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+              shape = RoundedCornerShape(10.dp),
+              modifier = Modifier.height(54.dp)
+            ) {
+              Text(if (activeLanguage == AppLanguage.KAZAKH) "Сақтау" else "СОХРАНИТЬ")
+            }
+          }
+
+          if (isValidatingUrl) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = AppleBlue)
+          }
+
+          if (newUrlError.isNotBlank()) {
+            Text(text = newUrlError, color = AppleRed, fontSize = 12.sp)
+          }
+
+          TextButton(onClick = { isEditingUrl = false; newUrlError = "" }) {
+            Text(if (activeLanguage == AppLanguage.KAZAKH) "Бас тарту" else "Отмена")
           }
         }
       }

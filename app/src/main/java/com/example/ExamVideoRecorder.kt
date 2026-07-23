@@ -3,6 +3,7 @@ package com.example
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Log
+import android.util.Range
 import androidx.camera.core.CameraSelector
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.video.FileOutputOptions
@@ -44,8 +45,11 @@ class ExamVideoRecorder(private val context: Context) {
 
         val recorder = Recorder.Builder()
           .setQualitySelector(QualitySelector.from(Quality.SD))
+          .setTargetVideoEncodingBitRate(450_000)
           .build()
-        val capture = VideoCapture.withOutput(recorder)
+        val capture = VideoCapture.Builder(recorder)
+          .setTargetFrameRate(Range(15, 15))
+          .build()
         provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_FRONT_CAMERA, capture)
 
         val file = File(context.cacheDir, "exam_${System.currentTimeMillis()}.mp4")

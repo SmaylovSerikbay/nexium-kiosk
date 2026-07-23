@@ -14,7 +14,7 @@ class ExamTypeRequestTest {
       systolic = 120,
       diastolic = 80,
       pulse = 70,
-      breathalyzer = "Пройден",
+      breathalyzer = "0.00",
       temperature = 36.6,
       complaints = "Нет",
       drugTest = "Не предусмотрено",

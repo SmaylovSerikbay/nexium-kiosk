@@ -1248,7 +1248,7 @@ fun KioskAppRoot(
       systolic = bpSystolic ?: 120,
       diastolic = bpDiastolic ?: 80,
       pulse = heartRateValue ?: 70,
-      breathalyzer = if (breathalyzerValue == null || breathalyzerValue!! <= 0.0) "Пройден" else "Не пройден",
+      breathalyzer = String.format(java.util.Locale.US, "%.2f", breathalyzerValue ?: 0.0),
       temperature = temperatureValue ?: 36.6,
       complaints = if (hasComplaints) "Да" else "Нет",
       drugTest = "Не предусмотрено",

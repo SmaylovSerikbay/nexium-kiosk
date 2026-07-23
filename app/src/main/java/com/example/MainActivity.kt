@@ -80,7 +80,9 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import android.bluetooth.*
 import android.bluetooth.le.*
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
@@ -116,6 +118,12 @@ enum class AppLanguage {
 }
 
 val LocalAppLanguage = staticCompositionLocalOf { AppLanguage.RUSSIAN }
+
+internal tailrec fun Context.findActivity(): Activity? = when (this) {
+  is Activity -> this
+  is ContextWrapper -> baseContext.findActivity()
+  else -> null
+}
 
 // AutoMirrored variants unavailable in the current material-icons-extended version.
 @Suppress("DEPRECATION")
@@ -6935,7 +6943,7 @@ fun SettingsScreen(
             value = screenBrightness,
             onValueChange = { value ->
               screenBrightness = value
-              (context as? android.app.Activity)?.window?.let { window ->
+              context.findActivity()?.window?.let { window ->
                 window.attributes = window.attributes.apply {
                   screenBrightness = value
                 }

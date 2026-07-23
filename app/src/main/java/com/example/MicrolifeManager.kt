@@ -57,6 +57,8 @@ object MicrolifeManager {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var timeoutJob: Job? = null
+    private var resultJob: Job? = null
+    private var latestResult: Pair<Long, Double>? = null
 
     // Auto-retry state
     private var retryCount    = 0
@@ -95,6 +97,8 @@ object MicrolifeManager {
         isMeasuring.value = true
         statusText.value  = "Поиск термометра…"
         lastWorkMode = -1
+        resultJob?.cancel()
+        latestResult = null
 
         val activity = context as? Activity
         if (activity == null) {
@@ -180,6 +184,9 @@ object MicrolifeManager {
         // Отменяем все coroutine-задачи
         timeoutJob?.cancel()
         timeoutJob = null
+        resultJob?.cancel()
+        resultJob = null
+        latestResult = null
         // Сбрасываем флаги ДО отключения — чтобы autoRetry не запустился снова
         isMeasuring.value = false
         isConnected.value = false
@@ -217,7 +224,20 @@ object MicrolifeManager {
                 return
             }
             if (temp in 20.0..50.0) {
-                deliverResult(temp)
+                val timestamp =
+                    data.year.toLong() * 100_000_000 +
+                    data.month * 1_000_000 +
+                    data.day * 10_000 +
+                    data.hour * 100 +
+                    data.minute
+                if (latestResult == null || timestamp >= latestResult!!.first) {
+                    latestResult = timestamp to temp
+                }
+                resultJob?.cancel()
+                resultJob = scope.launch {
+                    delay(1_500)
+                    latestResult?.second?.let(::deliverResult)
+                }
             } else {
                 Log.w(TAG, "Неправдоподобная температура=$temp — пропускаем")
                 statusText.value = "Неверное значение: ${temp}°C"

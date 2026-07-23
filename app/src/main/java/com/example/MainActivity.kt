@@ -3286,6 +3286,8 @@ fun Step2BloodPressure(
   val drawMutedColor = AppleMutedGrey
   var isCapturing by remember { mutableStateOf(false) }
   var progressValue by remember { mutableStateOf(0f) }
+  var captureAttempt by remember { mutableIntStateOf(0) }
+  var errorMessage by remember { mutableStateOf<String?>(null) }
   
   val context = androidx.compose.ui.platform.LocalContext.current
   val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
@@ -3323,21 +3325,45 @@ fun Step2BloodPressure(
     label = "wavePhase"
   )
 
-  LaunchedEffect(isCapturing) {
+  LaunchedEffect(isCapturing, captureAttempt) {
     if (isCapturing) {
       if (tonometerMode == "omron_ble") {
         if (tonometerMac.trim().isEmpty()) {
-          OmronBleManager.statusText.value = "Ошибка: MAC-адрес не настроен в Настройках!"
-          delay(3000)
-          progressValue = 0f
-          while (progressValue < 1f) {
-            delay(40)
-            progressValue += 0.02f
+          errorMessage = if (lang == AppLanguage.KAZAKH) {
+            "Тонометр баптауларда таңдалмаған"
+          } else {
+            "Тонометр не выбран в настройках"
           }
-          onConfirm(118, 77, 72)
+          isCapturing = false
         } else {
+          val attempt = captureAttempt
           OmronBleManager.connect(context, tonometerMac) { sys, dia, hr ->
-            onConfirm(sys, dia, hr)
+            if (isCapturing && captureAttempt == attempt) {
+              isCapturing = false
+              onConfirm(sys, dia, hr)
+            }
+          }
+
+          delay(20_000)
+          if (isCapturing && captureAttempt == attempt && !bleIsConnected.value) {
+            OmronBleManager.disconnect()
+            errorMessage = if (lang == AppLanguage.KAZAKH) {
+              "Тонометр табылмады. Оның қосулы екенін тексеріп, қайталап көріңіз."
+            } else {
+              "Тонометр не найден. Проверьте, что он включён, и попробуйте ещё раз."
+            }
+            isCapturing = false
+          } else {
+            delay(100_000)
+            if (isCapturing && captureAttempt == attempt) {
+              OmronBleManager.disconnect()
+              errorMessage = if (lang == AppLanguage.KAZAKH) {
+                "Өлшеу деректері алынбады. Өлшеуді аяқтап, қайталап көріңіз."
+              } else {
+                "Данные измерения не получены. Завершите измерение и попробуйте ещё раз."
+              }
+              isCapturing = false
+            }
           }
         }
       } else {
@@ -3596,6 +3622,22 @@ fun Step2BloodPressure(
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.Center
           )
+          OutlinedButton(
+            onClick = {
+              captureAttempt++
+              OmronBleManager.disconnect()
+              isCapturing = false
+              errorMessage = null
+            },
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(12.dp)
+          ) {
+            Text(
+              text = if (lang == AppLanguage.KAZAKH) "Болдырмау" else "Отменить",
+              color = AppleLightGrey,
+              fontWeight = FontWeight.SemiBold
+            )
+          }
         }
       } else {
         Column(
@@ -3623,8 +3665,22 @@ fun Step2BloodPressure(
         }
       }
     } else {
+      errorMessage?.let { message ->
+        Text(
+          text = message,
+          color = AppleRed,
+          fontSize = 13.sp,
+          fontWeight = FontWeight.Medium,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+        )
+      }
       Button(
-        onClick = { isCapturing = true },
+        onClick = {
+          errorMessage = null
+          captureAttempt++
+          isCapturing = true
+        },
         colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier
@@ -3661,10 +3717,12 @@ fun Step3Breathalyzer(
   val context = androidx.compose.ui.platform.LocalContext.current
   val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
   var breathalyzerMode by remember { mutableStateOf(prefs.getString("breathalyzer_mode", "simulation") ?: "simulation") }
+  var breathalyzerFastTest by remember { mutableStateOf(prefs.getBoolean("breathalyzer_fast_test", false)) }
 
   DisposableEffect(prefs) {
     val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
       if (key == "breathalyzer_mode") breathalyzerMode = sp.getString("breathalyzer_mode", "simulation") ?: "simulation"
+      if (key == "breathalyzer_fast_test") breathalyzerFastTest = sp.getBoolean("breathalyzer_fast_test", false)
     }
     prefs.registerOnSharedPreferenceChangeListener(listener)
     onDispose {
@@ -3709,13 +3767,14 @@ fun Step3Breathalyzer(
   }
 
   // AUTO-START: immediately begin measurement when step is shown
-  LaunchedEffect(breathalyzerMode) {
+  LaunchedEffect(breathalyzerMode, breathalyzerFastTest) {
     if (breathalyzerMode == "dingo_usb") {
       // Small delay so UI renders first
       delay(600)
       errorMessage = ""
       DingoSerialManager.startMeasurement(
         context = context,
+        fastTest = breathalyzerFastTest,
         onStatusUpdate = { msg -> DingoSerialManager.statusText.value = msg },
         onResult  = { mgPerL -> onConfirm(mgPerL) },
         onError   = { err -> errorMessage = err }
@@ -3924,6 +3983,7 @@ fun Step3Breathalyzer(
             errorMessage = ""
             DingoSerialManager.startMeasurement(
               context = context,
+              fastTest = breathalyzerFastTest,
               onStatusUpdate = { msg ->
                 DingoSerialManager.statusText.value = msg
               },
@@ -6392,8 +6452,10 @@ fun SettingsScreen(
   onBack: () -> Unit
 ) {
   val context = androidx.compose.ui.platform.LocalContext.current
+  val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
   val scope = rememberCoroutineScope()
   val isDark = LocalDarkTheme.current
+  var breathalyzerFastTest by remember { mutableStateOf(prefs.getBoolean("breathalyzer_fast_test", false)) }
 
   var isScanning by remember { mutableStateOf(false) }
   var foundDevices by remember { mutableStateOf<List<MockBluetoothDevice>>(emptyList()) }
@@ -7287,6 +7349,33 @@ fun SettingsScreen(
                 fontSize = 11.sp
               )
             }
+          }
+          Spacer(modifier = Modifier.height(12.dp))
+          Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Column(modifier = Modifier.weight(1f)) {
+              Text(
+                text = if (activeLanguage == AppLanguage.KAZAKH) "Жылдам тест" else "Быстрый тест",
+                color = AppleLightGrey,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold
+              )
+              Text(
+                text = if (breathalyzerFastTest) "\$FASTSENTECH • PASS/FAIL" else "\$STARTSENTECH • обычное измерение",
+                color = AppleMutedGrey,
+                fontSize = 11.sp
+              )
+            }
+            Switch(
+              checked = breathalyzerFastTest,
+              onCheckedChange = {
+                breathalyzerFastTest = it
+                prefs.edit().putBoolean("breathalyzer_fast_test", it).apply()
+              }
+            )
           }
         }
       }

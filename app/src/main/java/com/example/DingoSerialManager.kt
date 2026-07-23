@@ -34,6 +34,7 @@ object DingoSerialManager {
 
     // MAX40 commands
     private const val CMD_START = "\$STARTSENTECH\r\n"
+    private const val CMD_FAST  = "\$FASTSENTECH\r\n"
     private const val CMD_STOP  = "\$STOPSENTECH\r\n"
 
     // MAX40 responses
@@ -204,12 +205,13 @@ object DingoSerialManager {
      */
     fun startMeasurement(
         context: Context,
+        fastTest: Boolean = false,
         onStatusUpdate: (String) -> Unit,
         onResult: (Double) -> Unit,
         onError: (String) -> Unit
     ) {
         if (isConnected.value) {
-            doMeasure(onStatusUpdate, onResult, onError)
+            doMeasure(fastTest, onStatusUpdate, onResult, onError)
             return
         }
 
@@ -217,7 +219,7 @@ object DingoSerialManager {
             context = context,
             onGranted = {
                 if (connect(context)) {
-                    doMeasure(onStatusUpdate, onResult, onError)
+                    doMeasure(fastTest, onStatusUpdate, onResult, onError)
                 } else {
                     onError(statusText.value)
                 }
@@ -237,6 +239,7 @@ object DingoSerialManager {
     // ─── Private ──────────────────────────────────────────────────────────────
 
     private fun doMeasure(
+        fastTest: Boolean,
         onStatusUpdate: (String) -> Unit,
         onResult: (Double) -> Unit,
         onError: (String) -> Unit
@@ -245,7 +248,7 @@ object DingoSerialManager {
         measureJob?.cancel()
         measureJob = scope.launch {
             try {
-                sendCommand(CMD_START)
+                sendCommand(measurementCommand(fastTest))
                 withContext(Dispatchers.Main) { onStatusUpdate("Команда отправлена…") }
 
                 val buf = StringBuilder()
@@ -321,6 +324,8 @@ object DingoSerialManager {
     private fun sendCommand(cmd: String) {
         port?.write(cmd.toByteArray(Charsets.US_ASCII), 1000)
     }
+
+    internal fun measurementCommand(fastTest: Boolean) = if (fastTest) CMD_FAST else CMD_START
 
     private fun safeUnregister(context: Context) {
         receiver?.let {

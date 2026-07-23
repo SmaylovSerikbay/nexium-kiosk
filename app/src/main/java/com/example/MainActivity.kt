@@ -339,8 +339,20 @@ class FrontCameraTakePicturePreview : androidx.activity.result.contract.Activity
 // Кодирует снимок с камеры в JPEG Base64 data URL для отправки на бэкенд (аватар, Face ID).
 fun bitmapToJpegDataUrl(bitmap: android.graphics.Bitmap): String? {
   return try {
+    val maxDimension = 1280
+    val scale = minOf(1f, maxDimension.toFloat() / maxOf(bitmap.width, bitmap.height))
+    val uploadBitmap = if (scale < 1f) {
+      android.graphics.Bitmap.createScaledBitmap(
+        bitmap,
+        (bitmap.width * scale).toInt(),
+        (bitmap.height * scale).toInt(),
+        true
+      )
+    } else {
+      bitmap
+    }
     val stream = java.io.ByteArrayOutputStream()
-    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
+    uploadBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, stream)
     val encoded = android.util.Base64.encodeToString(stream.toByteArray(), android.util.Base64.NO_WRAP)
     "data:image/jpeg;base64,$encoded"
   } catch (e: Exception) {
@@ -406,19 +418,25 @@ fun FaceIdScanScreen(
   LaunchedEffect(Unit) { if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA) }
 
   // Авто-скан: как только камера готова и предыдущая проверка на сервере завершилась (isProcessing = false),
-  // берём три последовательных кадра и отдаём их наверх. Пауза даёт автофокусу устояться,
-  // а интервал не позволяет отправить три копии одного и того же кадра.
+  // берём пять последовательных кадров и отдаём их наверх. Сервер выберет три кадра,
+  // где лицо уверенно найдено; один смазанный кадр больше не сорвёт весь вход.
   val capture = imageCapture
   LaunchedEffect(capture, isProcessing) {
     if (capture == null || isProcessing) return@LaunchedEffect
     delay(1200)
-    val frames = buildList {
-      repeat(3) { index ->
-        captureFaceFrame(context, capture)?.let(::add)
-        if (index < 2) delay(400)
+    while (true) {
+      val frames = buildList {
+        repeat(5) { index ->
+          captureFaceFrame(context, capture)?.let(::add)
+          if (index < 4) delay(400)
+        }
       }
+      if (frames.size >= 3) {
+        onCapture(frames)
+        break
+      }
+      delay(500)
     }
-    if (frames.size == 3) onCapture(frames)
   }
 
   Box(
@@ -526,9 +544,11 @@ fun FaceIdScanScreen(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-      if (isProcessing) {
-        CircularProgressIndicator(color = AppleBlue, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
-      }
+      CircularProgressIndicator(
+        color = if (isProcessing) AppleBlue else Color.White,
+        modifier = Modifier.size(32.dp),
+        strokeWidth = 3.dp
+      )
       Text(
         text = statusText.ifEmpty { subtitle },
         color = if (isError) AppleAmber else Color.White,
@@ -1458,7 +1478,7 @@ fun KioskAppRoot(
 
   fun handleVerifyFace(bitmaps: List<android.graphics.Bitmap>) {
     val base64Photos = bitmaps.mapNotNull(::bitmapToJpegDataUrl)
-    if (base64Photos.size != 3) {
+    if (base64Photos.size < 3) {
       faceScanIsError = true
       faceScanStatusText = if (activeLanguage == AppLanguage.KAZAKH) "Суретті өңдеу мүмкін болмады" else "Не удалось обработать снимок"
       return
@@ -1515,7 +1535,7 @@ fun KioskAppRoot(
   fun handleEnrollFace(bitmaps: List<android.graphics.Bitmap>) {
     val employeeId = verifiedEmployeeResponse?.employeeId ?: return
     val base64Photos = bitmaps.mapNotNull(::bitmapToJpegDataUrl)
-    if (base64Photos.size != 3) return
+    if (base64Photos.size < 3) return
     scope.launch {
       isTogglingFaceId = true
       faceScanIsError = false
@@ -2062,9 +2082,9 @@ fun KioskAppRoot(
         FaceIdScanScreen(
           title = if (activeLanguage == AppLanguage.KAZAKH) "Face ID" else "Face ID",
           subtitle = if (captureMode == FaceIdCaptureMode.LOGIN) {
-            if (activeLanguage == AppLanguage.KAZAKH) "Бетіңізді сопақ жақтаудың ішіне орналастырып, түймені басыңыз" else "Расположите лицо в овале и нажмите кнопку"
+            if (activeLanguage == AppLanguage.KAZAKH) "Бетіңізді сопақ жақтаудың ішіне орналастырып, камераға қараңыз" else "Расположите лицо в овале и смотрите в камеру"
           } else {
-            if (activeLanguage == AppLanguage.KAZAKH) "Face ID қосу үшін бетіңізді суретке түсіріңіз" else "Снимок для включения Face ID"
+            if (activeLanguage == AppLanguage.KAZAKH) "Камераға қараңыз — Face ID автоматты түрде қосылады" else "Смотрите в камеру — Face ID включится автоматически"
           },
           isProcessing = if (captureMode == FaceIdCaptureMode.LOGIN) isVerifyingEmployee else isTogglingFaceId,
           statusText = faceScanStatusText,
@@ -5521,7 +5541,7 @@ fun RegistrationScreen(
 
   fun handleRegistrationFaceEnroll(bitmaps: List<android.graphics.Bitmap>) {
     val base64Photos = bitmaps.mapNotNull(::bitmapToJpegDataUrl)
-    if (base64Photos.size != 3) return
+    if (base64Photos.size < 3) return
     scope.launch {
       isEnrollingFace = true
       faceEnrollIsError = false
@@ -5555,7 +5575,7 @@ fun RegistrationScreen(
   if (showFaceIdEnrollStep) {
     FaceIdScanScreen(
       title = "Face ID",
-      subtitle = if (lang == AppLanguage.KAZAKH) "Face ID қосу үшін бетіңізді суретке түсіріңіз" else "Снимок для включения Face ID",
+      subtitle = if (lang == AppLanguage.KAZAKH) "Камераға қараңыз — Face ID автоматты түрде қосылады" else "Смотрите в камеру — Face ID включится автоматически",
       isProcessing = isEnrollingFace,
       statusText = faceEnrollStatusText,
       isError = faceEnrollIsError,

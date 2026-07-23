@@ -53,10 +53,6 @@ object MicrolifeManager {
     private var onResultCb: ((Double) -> Unit)? = null
     private var onErrorCb:  ((String) -> Unit)? = null
 
-    // Термометр при подключении может сначала прислать последнюю запись из своей
-    // памяти (workMode=WORK_MODE_MEMORY) ещё до того, как пользователь нажал START.
-    // Такие записи идут через тот же onResponseUploadMeasureData, что и живой замер —
-    // отличить их можно только по workMode из предыдущего onResponseDeviceInfo.
     private var lastWorkMode: Int = -1
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -215,12 +211,6 @@ object MicrolifeManager {
             val data = thermoMeasureData
             val temp = data.measureTemperature.toDouble()
             Log.d(TAG, ">>> MeasureData: temp=$temp flagErr=${data.flagErr} mode=${data.mode} workMode=$lastWorkMode")
-            val memoryMode = thermoProtocol?.WORK_MODE_MEMORY
-            if (memoryMode != null && lastWorkMode == memoryMode) {
-                Log.w(TAG, "workMode=MEMORY — это старая запись из памяти термометра, а не живой замер, пропускаем")
-                statusText.value = "Нажмите START на термометре"
-                return
-            }
             if (data.flagErr != 0) {
                 Log.w(TAG, "flagErr=${data.flagErr} — ошибка измерения, пропускаем")
                 statusText.value = "Ошибка измерения (flagErr=${data.flagErr})"

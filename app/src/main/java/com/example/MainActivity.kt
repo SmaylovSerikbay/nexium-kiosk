@@ -4007,13 +4007,10 @@ fun Step4Temperature(
   var thermometerMac  by remember { mutableStateOf(prefs.getString("thermometer_mac",  "") ?: "") }
   var thermometerName by remember { mutableStateOf(prefs.getString("thermometer_name", "") ?: "") }
 
-  // Tracks whether BLE connection has been initiated (one-shot)
-  var hasStarted by remember { mutableStateOf(false) }
-
   DisposableEffect(prefs) {
     val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
       when (key) {
-        "thermometer_mode" -> { thermometerMode = sp.getString("thermometer_mode", "simulation") ?: "simulation"; hasStarted = false }
+        "thermometer_mode" -> thermometerMode = sp.getString("thermometer_mode", "simulation") ?: "simulation"
         "thermometer_mac"  -> thermometerMac  = sp.getString("thermometer_mac",  "") ?: ""
         "thermometer_name" -> thermometerName = sp.getString("thermometer_name", "") ?: ""
       }
@@ -4048,30 +4045,9 @@ fun Step4Temperature(
     label = "heatShimmer"
   )
 
-  // AUTO-START once when entering step
-  LaunchedEffect(Unit) {
-    if (hasStarted) return@LaunchedEffect
-    hasStarted = true
-    errorMessage = ""
-
-    if (isMicrolifeActive) {
-      // Microlife NC-150 BT: GATT connect without system pairing
-      delay(400)
-      if (thermometerMac.isBlank()) {
-        errorMessage = "MAC-адрес не задан. Откройте Настройки → отсканируйте Microlife NC-150 BT"
-        return@LaunchedEffect
-      }
-      MicrolifeManager.connect(
-        context    = context,
-        macAddress = thermometerMac,
-        onResult   = { temp ->
-          currentTemp = temp
-          onConfirm(temp)
-        },
-        onError    = { err -> errorMessage = err }
-      )
-    } else {
-      // Simulation: auto-animate temperature rise
+  // Simulation keeps its existing automatic flow; the real thermometer starts by button.
+  LaunchedEffect(isMicrolifeActive) {
+    if (!isMicrolifeActive) {
       delay(300)
       scansCount = 0f
       while (scansCount < 1f) {
@@ -4081,6 +4057,20 @@ fun Step4Temperature(
       }
       onConfirm(36.6)
     }
+  }
+
+  fun readTemperature() {
+    errorMessage = ""
+    if (thermometerMac.isBlank()) {
+      errorMessage = "MAC-адрес не задан. Откройте Настройки → отсканируйте Microlife NC-150 BT"
+      return
+    }
+    MicrolifeManager.connect(
+      context = context,
+      macAddress = thermometerMac,
+      onResult = { temp -> currentTemp = temp; onConfirm(temp) },
+      onError = { err -> errorMessage = err }
+    )
   }
 
   val isDark = LocalDarkTheme.current
@@ -4183,25 +4173,6 @@ fun Step4Temperature(
           fontSize = 12.sp, textAlign = TextAlign.Center,
           modifier = Modifier.padding(horizontal = 14.dp)
         )
-        if (errorMessage.isNotEmpty()) {
-          Spacer(modifier = Modifier.height(8.dp))
-          OutlinedButton(
-            onClick = {
-              errorMessage = ""
-              hasStarted = false
-              MicrolifeManager.connect(
-                context = context,
-                macAddress = thermometerMac,
-                onResult = { temp -> currentTemp = temp; onConfirm(temp) },
-                onError  = { err -> errorMessage = err }
-              )
-            },
-            border = BorderStroke(1.dp, AppleBlue.copy(alpha = 0.6f)),
-            shape = RoundedCornerShape(10.dp)
-          ) {
-            Text(text = if (lang == AppLanguage.KAZAKH) "Қайталау" else "Повторить", color = AppleBlue, fontSize = 12.sp)
-          }
-        }
       } else {
         Text(
           text = AppText.tempScanning.get(lang),
@@ -4224,7 +4195,26 @@ fun Step4Temperature(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-      if (isBleActive && microMeasuring.value) {
+      if (isBleActive && !microMeasuring.value) {
+        Button(
+          onClick = { readTemperature() },
+          colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+          shape = RoundedCornerShape(14.dp),
+          modifier = Modifier.fillMaxWidth().height(56.dp)
+        ) {
+          Icon(
+            imageVector = LegacyBluetoothSearchingIcon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+          )
+          Spacer(modifier = Modifier.width(8.dp))
+          Text(
+            text = if (lang == AppLanguage.KAZAKH) "Температура деректерін алу" else "Получить данные температуры",
+            fontWeight = FontWeight.Bold,
+            fontSize = 14.sp
+          )
+        }
+      } else if (isBleActive && microMeasuring.value) {
         LinearProgressIndicator(
           color = tempColor,
           trackColor = if (isDark) AppleCharcoal else Color(0xFFE5E5EA),
@@ -4232,17 +4222,6 @@ fun Step4Temperature(
         )
         Text(
           text = microStatus.value,
-          color = tempColor, fontSize = 12.sp, fontWeight = FontWeight.Medium
-        )
-      } else if (isBleActive && errorMessage.isEmpty() && !microConnected.value) {
-        // Scanning progress
-        LinearProgressIndicator(
-          color = tempColor,
-          trackColor = if (isDark) AppleCharcoal else Color(0xFFE5E5EA),
-          modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
-        )
-        Text(
-          text = "Поиск термометра...",
           color = tempColor, fontSize = 12.sp, fontWeight = FontWeight.Medium
         )
       } else if (!isBleActive) {

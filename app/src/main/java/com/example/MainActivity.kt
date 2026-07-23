@@ -30,6 +30,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Backspace
+import androidx.compose.material.icons.automirrored.filled.Login
+import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -5092,7 +5094,7 @@ fun ExamTypeSelectionScreen(
             verticalArrangement = Arrangement.Center
           ) {
             Icon(
-              imageVector = if (apiValue == "Предсменный") Icons.Default.Login else Icons.Default.Logout,
+              imageVector = if (apiValue == "Предсменный") Icons.AutoMirrored.Filled.Login else Icons.AutoMirrored.Filled.Logout,
               contentDescription = null,
               tint = if (isSelected) AppleBlue else AppleMutedGrey,
               modifier = Modifier.size(42.dp)

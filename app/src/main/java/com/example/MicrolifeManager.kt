@@ -225,11 +225,11 @@ object MicrolifeManager {
             }
             if (temp in 20.0..50.0) {
                 val timestamp =
-                    data.year.toLong() * 100_000_000 +
-                    data.month * 1_000_000 +
-                    data.day * 10_000 +
-                    data.hour * 100 +
-                    data.minute
+                    (data.year ?: 0).toLong() * 100_000_000 +
+                    (data.month ?: 0) * 1_000_000 +
+                    (data.day ?: 0) * 10_000 +
+                    (data.hour ?: 0) * 100 +
+                    (data.minute ?: 0)
                 if (latestResult == null || timestamp >= latestResult!!.first) {
                     latestResult = timestamp to temp
                 }

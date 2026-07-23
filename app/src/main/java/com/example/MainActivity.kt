@@ -80,9 +80,7 @@ import kotlin.math.roundToInt
 import kotlin.math.sin
 import android.bluetooth.*
 import android.bluetooth.le.*
-import android.app.Activity
 import android.content.Context
-import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
@@ -118,12 +116,6 @@ enum class AppLanguage {
 }
 
 val LocalAppLanguage = staticCompositionLocalOf { AppLanguage.RUSSIAN }
-
-internal tailrec fun Context.findActivity(): Activity? = when (this) {
-  is Activity -> this
-  is ContextWrapper -> baseContext.findActivity()
-  else -> null
-}
 
 // AutoMirrored variants unavailable in the current material-icons-extended version.
 @Suppress("DEPRECATION")
@@ -631,6 +623,11 @@ class MainActivity : ComponentActivity() {
             prefs.edit().putBoolean("is_dark_theme", newValue).apply()
           },
           kioskModeEnabled = kioskModeEnabled,
+          onScreenBrightnessChange = { brightness ->
+            window.attributes = window.attributes.apply {
+              screenBrightness = brightness
+            }
+          },
           onKioskModeToggle = { enabled ->
             kioskModeEnabled = enabled
             settingsPrefs.edit().putBoolean("kiosk_mode_enabled", enabled).apply()
@@ -823,6 +820,7 @@ fun KioskAppRoot(
   isDarkTheme: Boolean = true,
   onThemeToggle: () -> Unit = {},
   kioskModeEnabled: Boolean = true,
+  onScreenBrightnessChange: (Float) -> Unit = {},
   onKioskModeToggle: (Boolean) -> Unit = {}
 ) {
   var appLanguage by remember { mutableStateOf<AppLanguage?>(null) }
@@ -1862,6 +1860,7 @@ fun KioskAppRoot(
               isFetchingTokenInfo = isFetchingTokenInfo,
               apiBaseUrl = apiBaseUrl,
               kioskModeEnabled = kioskModeEnabled,
+              onScreenBrightnessChange = onScreenBrightnessChange,
               onKioskModeToggle = onKioskModeToggle,
               onSaveDevice = { type, mode, mac, name ->
                 prefs.edit()
@@ -6600,6 +6599,7 @@ fun SettingsScreen(
   isFetchingTokenInfo: Boolean,
   apiBaseUrl: String,
   kioskModeEnabled: Boolean,
+  onScreenBrightnessChange: (Float) -> Unit,
   onKioskModeToggle: (Boolean) -> Unit,
   onSaveDevice: (type: String, mode: String, mac: String, name: String) -> Unit,
   onSaveToken: (String) -> Unit,
@@ -6943,11 +6943,7 @@ fun SettingsScreen(
             value = screenBrightness,
             onValueChange = { value ->
               screenBrightness = value
-              context.findActivity()?.window?.let { window ->
-                window.attributes = window.attributes.apply {
-                  screenBrightness = value
-                }
-              }
+              onScreenBrightnessChange(value)
             },
             onValueChangeFinished = {
               settingsPrefs.edit().putFloat("screen_brightness", screenBrightness).apply()

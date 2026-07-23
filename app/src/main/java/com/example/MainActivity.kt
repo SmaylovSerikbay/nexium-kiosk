@@ -1180,12 +1180,12 @@ fun KioskAppRoot(
 
   val scope = rememberCoroutineScope()
 
-  // Через 30 секунд после ответа на вопрос о жалобах запускаем Dingo параллельно
+  // Через 15 секунд после ответа на вопрос о жалобах запускаем Dingo параллельно
   // измерению давления. Если результат уже готов к концу измерения давления,
   // отдельный экран запуска алкотестера пропускается.
   LaunchedEffect(breathalyzerAutoStartRequest) {
     if (breathalyzerAutoStartRequest == 0) return@LaunchedEffect
-    delay(30_000)
+    delay(15_000)
     if (
       currentScreen == KioskScreen.DASHBOARD &&
       breathalyzerValue == null &&

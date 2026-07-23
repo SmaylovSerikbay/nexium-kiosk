@@ -505,7 +505,15 @@ fun FaceIdScanScreen(
       ) {
         Icon(imageVector = Icons.Default.Close, contentDescription = "Cancel", tint = Color.White)
       }
-      Text(text = title, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+      Text(
+        text = title,
+        color = Color.White,
+        fontWeight = FontWeight.Bold,
+        fontSize = 16.sp,
+        modifier = Modifier
+          .background(Color.Black.copy(alpha = 0.68f), RoundedCornerShape(12.dp))
+          .padding(horizontal = 16.dp, vertical = 8.dp)
+      )
       Spacer(modifier = Modifier.size(40.dp))
     }
 
@@ -523,10 +531,13 @@ fun FaceIdScanScreen(
       }
       Text(
         text = statusText.ifEmpty { subtitle },
-        color = if (isError) AppleAmber else Color.White.copy(alpha = 0.85f),
+        color = if (isError) AppleAmber else Color.White,
         fontSize = 14.sp,
         fontWeight = FontWeight.Medium,
-        textAlign = TextAlign.Center
+        textAlign = TextAlign.Center,
+        modifier = Modifier
+          .background(Color.Black.copy(alpha = 0.78f), RoundedCornerShape(14.dp))
+          .padding(horizontal = 20.dp, vertical = 12.dp)
       )
     }
   }

@@ -73,6 +73,8 @@ import com.example.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlin.math.cos
@@ -1185,6 +1187,7 @@ fun KioskAppRoot(
   }
 
   val scope = rememberCoroutineScope()
+  var examSubmissionJob by remember { mutableStateOf<Job?>(null) }
 
   // Через 15 секунд после ответа на вопрос о жалобах запускаем Dingo параллельно
   // измерению давления. Если результат уже готов к концу измерения давления,
@@ -1288,6 +1291,8 @@ fun KioskAppRoot(
           operation = AppText.errorExamSendFailed.get(lang)
         )
       }
+    } catch (e: CancellationException) {
+      throw e
     } catch (e: Exception) {
       examSendErrorMessage = ApiErrorText.fromThrowable(
         throwable = e,
@@ -1319,6 +1324,8 @@ fun KioskAppRoot(
               )
             )
           }
+        } catch (e: CancellationException) {
+          throw e
         } catch (e: Exception) {
           e.printStackTrace()
         }
@@ -1360,6 +1367,8 @@ fun KioskAppRoot(
               }
             }
           }
+        } catch (e: CancellationException) {
+          throw e
         } catch (e: Exception) {
           e.printStackTrace()
         }
@@ -1595,6 +1604,8 @@ fun KioskAppRoot(
   }
 
   fun resetAllWorkflowData() {
+    examSubmissionJob?.cancel()
+    examSubmissionJob = null
     // Освобождаем BLE термометр перед сбросом (тонометр Omron не трогаем — он управляется своим DisposableEffect)
     MicrolifeManager.disconnect()
     // Осмотр брошен без отправки — просто останавливаем и отбрасываем незавершённую запись.
@@ -1805,7 +1816,8 @@ fun KioskAppRoot(
               },
               onSignAndSubmit = {
                 val profileId = (currentEmployeeProfile ?: defaultEmployeeProfile).id
-                scope.launch {
+                examSubmissionJob?.cancel()
+                examSubmissionJob = scope.launch {
                   sendHealthDataAndPoll(profileId, activeLanguage)
                 }
               },
@@ -1816,7 +1828,8 @@ fun KioskAppRoot(
               examSendErrorMessage = examSendErrorMessage,
               onRetrySend = {
                 val profileId = (currentEmployeeProfile ?: defaultEmployeeProfile).id
-                scope.launch {
+                examSubmissionJob?.cancel()
+                examSubmissionJob = scope.launch {
                   sendHealthDataAndPoll(profileId, activeLanguage)
                 }
               },

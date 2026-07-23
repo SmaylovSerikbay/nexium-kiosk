@@ -388,7 +388,7 @@ fun FaceIdScanScreen(
   isProcessing: Boolean,
   statusText: String,
   isError: Boolean,
-  onCapture: (android.graphics.Bitmap) -> Unit,
+  onCapture: (List<android.graphics.Bitmap>) -> Unit,
   onCancel: () -> Unit
 ) {
   val lang = LocalAppLanguage.current
@@ -406,13 +406,19 @@ fun FaceIdScanScreen(
   LaunchedEffect(Unit) { if (!hasCameraPermission) permissionLauncher.launch(Manifest.permission.CAMERA) }
 
   // Авто-скан: как только камера готова и предыдущая проверка на сервере завершилась (isProcessing = false),
-  // берём новый кадр и отдаём его наверх — без кнопки "Сделать снимок". Пауза даёт автофокусу устояться.
+  // берём три последовательных кадра и отдаём их наверх. Пауза даёт автофокусу устояться,
+  // а интервал не позволяет отправить три копии одного и того же кадра.
   val capture = imageCapture
   LaunchedEffect(capture, isProcessing) {
     if (capture == null || isProcessing) return@LaunchedEffect
     delay(1200)
-    val bitmap = captureFaceFrame(context, capture)
-    if (bitmap != null) onCapture(bitmap)
+    val frames = buildList {
+      repeat(3) { index ->
+        captureFaceFrame(context, capture)?.let(::add)
+        if (index < 2) delay(400)
+      }
+    }
+    if (frames.size == 3) onCapture(frames)
   }
 
   Box(
@@ -1439,9 +1445,9 @@ fun KioskAppRoot(
   var faceScanStatusText by remember { mutableStateOf("") }
   var faceScanIsError by remember { mutableStateOf(false) }
 
-  fun handleVerifyFace(bitmap: android.graphics.Bitmap) {
-    val base64Photo = bitmapToJpegDataUrl(bitmap)
-    if (base64Photo == null) {
+  fun handleVerifyFace(bitmaps: List<android.graphics.Bitmap>) {
+    val base64Photos = bitmaps.mapNotNull(::bitmapToJpegDataUrl)
+    if (base64Photos.size != 3) {
       faceScanIsError = true
       faceScanStatusText = if (activeLanguage == AppLanguage.KAZAKH) "Суретті өңдеу мүмкін болмады" else "Не удалось обработать снимок"
       return
@@ -1454,7 +1460,7 @@ fun KioskAppRoot(
         val response = withContext(Dispatchers.IO) {
           NexApiClient.service.verifyFace(
             deviceToken = NexApiClient.deviceToken,
-            request = VerifyFaceRequest(facePhoto = base64Photo)
+            request = VerifyFaceRequest(facePhoto = base64Photos.first(), facePhotos = base64Photos)
           )
         }
         if (response.exists) {
@@ -1495,9 +1501,10 @@ fun KioskAppRoot(
   }
 
   // Энролмент/отключение Face ID — только по решению уже вошедшего сотрудника, на экране CONFIRMATION.
-  fun handleEnrollFace(bitmap: android.graphics.Bitmap) {
+  fun handleEnrollFace(bitmaps: List<android.graphics.Bitmap>) {
     val employeeId = verifiedEmployeeResponse?.employeeId ?: return
-    val base64Photo = bitmapToJpegDataUrl(bitmap) ?: return
+    val base64Photos = bitmaps.mapNotNull(::bitmapToJpegDataUrl)
+    if (base64Photos.size != 3) return
     scope.launch {
       isTogglingFaceId = true
       faceScanIsError = false
@@ -1506,7 +1513,7 @@ fun KioskAppRoot(
         val response = withContext(Dispatchers.IO) {
           NexApiClient.service.enrollFace(
             deviceToken = NexApiClient.deviceToken,
-            request = EnrollFaceRequest(employeeId = employeeId, facePhoto = base64Photo)
+            request = EnrollFaceRequest(employeeId = employeeId, facePhoto = base64Photos.first(), facePhotos = base64Photos)
           )
         }
         verifiedEmployeeResponse = verifiedEmployeeResponse?.copy(faceIdEnabled = response.faceIdEnabled)
@@ -2051,8 +2058,8 @@ fun KioskAppRoot(
           isProcessing = if (captureMode == FaceIdCaptureMode.LOGIN) isVerifyingEmployee else isTogglingFaceId,
           statusText = faceScanStatusText,
           isError = faceScanIsError,
-          onCapture = { bitmap ->
-            if (captureMode == FaceIdCaptureMode.LOGIN) handleVerifyFace(bitmap) else handleEnrollFace(bitmap)
+          onCapture = { bitmaps ->
+            if (captureMode == FaceIdCaptureMode.LOGIN) handleVerifyFace(bitmaps) else handleEnrollFace(bitmaps)
           },
           onCancel = { faceIdCaptureMode = null }
         )
@@ -5501,8 +5508,9 @@ fun RegistrationScreen(
     )
   }
 
-  fun handleRegistrationFaceEnroll(bitmap: android.graphics.Bitmap) {
-    val base64Photo = bitmapToJpegDataUrl(bitmap) ?: return
+  fun handleRegistrationFaceEnroll(bitmaps: List<android.graphics.Bitmap>) {
+    val base64Photos = bitmaps.mapNotNull(::bitmapToJpegDataUrl)
+    if (base64Photos.size != 3) return
     scope.launch {
       isEnrollingFace = true
       faceEnrollIsError = false
@@ -5511,7 +5519,11 @@ fun RegistrationScreen(
         withContext(Dispatchers.IO) {
           NexApiClient.service.enrollFace(
             deviceToken = NexApiClient.deviceToken,
-            request = EnrollFaceRequest(employeeId = registeredIdResult, facePhoto = base64Photo)
+            request = EnrollFaceRequest(
+              employeeId = registeredIdResult,
+              facePhoto = base64Photos.first(),
+              facePhotos = base64Photos
+            )
           )
         }
         showFaceIdEnrollStep = false
@@ -5536,7 +5548,7 @@ fun RegistrationScreen(
       isProcessing = isEnrollingFace,
       statusText = faceEnrollStatusText,
       isError = faceEnrollIsError,
-      onCapture = { bitmap -> handleRegistrationFaceEnroll(bitmap) },
+      onCapture = { bitmaps -> handleRegistrationFaceEnroll(bitmaps) },
       onCancel = {
         showFaceIdEnrollStep = false
         finishRegistration()

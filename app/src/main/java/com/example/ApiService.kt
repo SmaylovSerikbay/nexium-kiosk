@@ -110,13 +110,15 @@ data class VerifyEmployeeResponse(
 
 @JsonClass(generateAdapter = true)
 data class VerifyFaceRequest(
-    @Json(name = "face_photo") val facePhoto: String
+    @Json(name = "face_photo") val facePhoto: String,
+    @Json(name = "face_photos") val facePhotos: List<String>
 )
 
 @JsonClass(generateAdapter = true)
 data class EnrollFaceRequest(
     @Json(name = "employee_id") val employeeId: String,
-    @Json(name = "face_photo") val facePhoto: String
+    @Json(name = "face_photo") val facePhoto: String,
+    @Json(name = "face_photos") val facePhotos: List<String>
 )
 
 @JsonClass(generateAdapter = true)

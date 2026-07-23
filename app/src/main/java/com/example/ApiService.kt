@@ -10,6 +10,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import okhttp3.MultipartBody
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.POST
@@ -295,6 +296,12 @@ interface NexApiService {
         @Header("X-Device-Token") deviceToken: String,
         @Path("id") id: String
     ): Response<ExamDetailResponse>
+
+    @DELETE("exams/{id}")
+    suspend fun deleteExam(
+        @Header("X-Device-Token") deviceToken: String,
+        @Path("id") id: String
+    ): Response<ResponseBody>
 
     @POST("patients/register")
     suspend fun registerPatient(

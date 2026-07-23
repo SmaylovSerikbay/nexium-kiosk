@@ -932,6 +932,7 @@ fun KioskAppRoot(
   var faceIdCaptureMode by remember { mutableStateOf<FaceIdCaptureMode?>(null) }
   var examSendStatus by remember { mutableStateOf(ExamSendStatus.IDLE) }
   var examSendErrorMessage by remember { mutableStateOf("") }
+  var activeSubmittedExamId by remember { mutableStateOf("") }
   var selectedExamType by remember { mutableStateOf("") }
 
   // Запись видео осмотра: стартует при входе в кабинет сотрудника, останавливается
@@ -1029,6 +1030,31 @@ fun KioskAppRoot(
     val pendingExamId = settingsPrefs.getString("pending_video_exam_id", null)
     if (pendingPath != null && pendingExamId != null) {
       uploadExamVideoFile(java.io.File(pendingPath), pendingExamId)
+    }
+  }
+
+  suspend fun deleteSubmittedExam(examId: String) {
+    if (examId.isEmpty()) return
+    try {
+      val response = withContext(Dispatchers.IO) {
+        NexApiClient.service.deleteExam(
+          deviceToken = NexApiClient.deviceToken,
+          id = examId
+        )
+      }
+      if (response.isSuccessful || response.code() == 404) {
+        settingsPrefs.edit().remove("pending_cancelled_exam_id").apply()
+      } else {
+        settingsPrefs.edit().putString("pending_cancelled_exam_id", examId).apply()
+      }
+    } catch (_: Exception) {
+      settingsPrefs.edit().putString("pending_cancelled_exam_id", examId).apply()
+    }
+  }
+
+  LaunchedEffect(Unit) {
+    settingsPrefs.getString("pending_cancelled_exam_id", null)?.let {
+      deleteSubmittedExam(it)
     }
   }
 
@@ -1271,6 +1297,7 @@ fun KioskAppRoot(
       if (response.isSuccessful) {
         success = true
         settingsPrefs.edit().remove("pending_exam_id").apply()
+        activeSubmittedExamId = requestExamId
         val bodyString = response.body()?.string() ?: ""
         try {
           val jsonObject = org.json.JSONObject(bodyString)
@@ -1604,8 +1631,16 @@ fun KioskAppRoot(
   }
 
   fun resetAllWorkflowData() {
+    val submittedExamId = activeSubmittedExamId.ifEmpty {
+      settingsPrefs.getString("pending_exam_id", "") ?: ""
+    }
     examSubmissionJob?.cancel()
     examSubmissionJob = null
+    activeSubmittedExamId = ""
+    if (submittedExamId.isNotEmpty()) {
+      settingsPrefs.edit().putString("pending_cancelled_exam_id", submittedExamId).apply()
+      scope.launch { deleteSubmittedExam(submittedExamId) }
+    }
     // Освобождаем BLE термометр перед сбросом (тонометр Omron не трогаем — он управляется своим DisposableEffect)
     MicrolifeManager.disconnect()
     // Осмотр брошен без отправки — просто останавливаем и отбрасываем незавершённую запись.

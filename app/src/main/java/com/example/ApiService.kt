@@ -126,6 +126,7 @@ data class DisableFaceRequest(
 
 @JsonClass(generateAdapter = true)
 data class CreateExamRequest(
+    @Json(name = "exam_id") val examId: String = "",
     @Json(name = "employee_id") val employeeId: String,
     @Json(name = "device_id") val deviceId: Int,
     @Json(name = "type_status") val typeStatus: String,

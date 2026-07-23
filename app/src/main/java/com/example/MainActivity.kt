@@ -1130,6 +1130,7 @@ fun KioskAppRoot(
 
   // SENDS DIAGNOSTICS MEASUREMENTS TO NEX SERVER AND POLLS FOR THE NURSE/MEDIC APPROVAL STATUS
   suspend fun sendHealthDataAndPoll(profileId: String, lang: AppLanguage) {
+    if (examSendStatus == ExamSendStatus.SENDING) return
     currentStep = StepState.SECURE_LOADING
     examSendStatus = ExamSendStatus.SENDING
     examSendErrorMessage = ""
@@ -1147,7 +1148,12 @@ fun KioskAppRoot(
     val isDopuskAllowed = !(hasComplaints || isAbnormalBp || isAbnormalPulse || isPositiveAlc || isAbnormalTemp)
     val deviceDopuskStr = if (isDopuskAllowed) "Допущен" else "Не допущен"
 
+    val requestExamId = settingsPrefs.getString("pending_exam_id", null)
+      ?: java.util.UUID.randomUUID().toString().also {
+        settingsPrefs.edit().putString("pending_exam_id", it).apply()
+      }
     val request = CreateExamRequest(
+      examId = requestExamId,
       employeeId = profileId,
       deviceId = 4,
       typeStatus = selectedExamType,
@@ -1509,6 +1515,9 @@ fun KioskAppRoot(
     temperatureValue = null
     selectedComplaintsList = emptyList()
     plainComplaintsState = null
+    examSendStatus = ExamSendStatus.IDLE
+    examSendErrorMessage = ""
+    settingsPrefs.edit().remove("pending_exam_id").apply()
     currentStep = StepState.HEALTH_COMPLAINTS
     selectedExamType = ""
     enteredPin = ""

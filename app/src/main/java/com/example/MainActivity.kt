@@ -395,6 +395,7 @@ fun FaceIdScanScreen(
   val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 
   var imageCapture by remember { mutableStateOf<ImageCapture?>(null) }
+  var cameraProvider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
   var hasCameraPermission by remember {
     mutableStateOf(context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED)
   }
@@ -429,6 +430,7 @@ fun FaceIdScanScreen(
           future.addListener({
             try {
               val provider = future.get()
+              cameraProvider = provider
               val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
               }
@@ -449,6 +451,13 @@ fun FaceIdScanScreen(
         color = Color.White,
         modifier = Modifier.align(Alignment.Center)
       )
+    }
+
+    DisposableEffect(Unit) {
+      onDispose {
+        cameraProvider?.unbindAll()
+        imageCapture = null
+      }
     }
 
     // Овальная рамка-гид — размер считаем от высоты экрана и фиксированной пропорции лица (~0.74),
@@ -776,6 +785,7 @@ fun KioskAppRoot(
   var enteredPin by remember { mutableStateOf("") }
   var shakeTrigger by remember { mutableStateOf(0) }
   var pinErrorText by remember { mutableStateOf("") }
+  var showSettingsPasswordDialog by remember { mutableStateOf(false) }
   
   val context = androidx.compose.ui.platform.LocalContext.current
   val prefs = remember(context) { context.getSharedPreferences("nex_employees", android.content.Context.MODE_PRIVATE) }
@@ -1003,6 +1013,7 @@ fun KioskAppRoot(
   var temperatureValue by remember { mutableStateOf<Double?>(null) }
   var selectedComplaintsList by remember { mutableStateOf<List<String>>(emptyList()) }
   var plainComplaintsState by remember { mutableStateOf<String?>(null) } // "Pending", "None" or symptom summary
+  var breathalyzerAutoStartRequest by remember { mutableIntStateOf(0) }
 
   val isIdleForSilentUpdate =
     currentEmployeeProfile == null &&
@@ -1128,6 +1139,36 @@ fun KioskAppRoot(
 
   val scope = rememberCoroutineScope()
 
+  // Через 30 секунд после ответа на вопрос о жалобах запускаем Dingo параллельно
+  // измерению давления. Если результат уже готов к концу измерения давления,
+  // отдельный экран запуска алкотестера пропускается.
+  LaunchedEffect(breathalyzerAutoStartRequest) {
+    if (breathalyzerAutoStartRequest == 0) return@LaunchedEffect
+    delay(30_000)
+    if (
+      currentScreen == KioskScreen.DASHBOARD &&
+      breathalyzerValue == null &&
+      prefs.getString("breathalyzer_mode", "simulation") == "dingo_usb"
+    ) {
+      DingoSerialManager.startMeasurement(
+        context = context,
+        fastTest = prefs.getBoolean("breathalyzer_fast_test", false),
+        onStatusUpdate = { message -> DingoSerialManager.statusText.value = message },
+        onResult = { result ->
+          breathalyzerValue = result
+          if (currentStep == StepState.BREATHALYZER) {
+            currentStep = StepState.TEMPERATURE
+          }
+          DingoSerialManager.disconnect()
+        },
+        onError = { error ->
+          DingoSerialManager.statusText.value = error
+          DingoSerialManager.disconnect()
+        },
+      )
+    }
+  }
+
   // SENDS DIAGNOSTICS MEASUREMENTS TO NEX SERVER AND POLLS FOR THE NURSE/MEDIC APPROVAL STATUS
   suspend fun sendHealthDataAndPoll(profileId: String, lang: AppLanguage) {
     if (examSendStatus == ExamSendStatus.SENDING) return
@@ -1179,6 +1220,7 @@ fun KioskAppRoot(
       }
       if (response.isSuccessful) {
         success = true
+        settingsPrefs.edit().remove("pending_exam_id").apply()
         val bodyString = response.body()?.string() ?: ""
         try {
           val jsonObject = org.json.JSONObject(bodyString)
@@ -1189,6 +1231,9 @@ fun KioskAppRoot(
         }
       } else {
         val errBody = response.errorBody()?.string()
+        if (response.code() == 409) {
+          settingsPrefs.edit().remove("pending_exam_id").apply()
+        }
         examSendErrorMessage = ApiErrorText.fromHttp(
           code = response.code(),
           errorBody = errBody,
@@ -1693,13 +1738,14 @@ fun KioskAppRoot(
                 } else {
                   plainComplaintsState = "None"
                 }
+                breathalyzerAutoStartRequest++
                 currentStep = StepState.BLOOD_PRESSURE
               },
               onSimulateBPAndPulse = { sys, dia, bpm ->
                 bpSystolic = sys
                 bpDiastolic = dia
                 heartRateValue = bpm
-                currentStep = StepState.BREATHALYZER
+                currentStep = if (breathalyzerValue != null) StepState.TEMPERATURE else StepState.BREATHALYZER
               },
               onSimulateBreathalyzer = { valBreath ->
                 breathalyzerValue = valBreath
@@ -1815,7 +1861,7 @@ fun KioskAppRoot(
 
       if (currentScreen != KioskScreen.SETTINGS && currentScreen != KioskScreen.REGISTRATION && currentScreen != KioskScreen.CONFIRMATION && currentScreen != KioskScreen.EXAM_TYPE_SELECTION) {
         IconButton(
-          onClick = { currentScreen = KioskScreen.SETTINGS },
+          onClick = { showSettingsPasswordDialog = true },
           modifier = Modifier
             .align(Alignment.TopEnd)
             .padding(16.dp)
@@ -1828,6 +1874,58 @@ fun KioskAppRoot(
             modifier = Modifier.size(28.dp)
           )
         }
+      }
+
+      if (showSettingsPasswordDialog) {
+        var password by remember { mutableStateOf("") }
+        var passwordError by remember { mutableStateOf(false) }
+
+        AlertDialog(
+          onDismissRequest = { showSettingsPasswordDialog = false },
+          title = {
+            Text(if (activeLanguage == AppLanguage.KAZAKH) "Баптауларға кіру" else "Вход в настройки")
+          },
+          text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+              OutlinedTextField(
+                value = password,
+                onValueChange = {
+                  password = it
+                  passwordError = false
+                },
+                label = { Text("PIN-код") },
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                isError = passwordError,
+                singleLine = true,
+              )
+              if (passwordError) {
+                Text(
+                  text = if (activeLanguage == AppLanguage.KAZAKH) "Қате PIN-код" else "Неверный PIN-код",
+                  color = AppleRed,
+                )
+              }
+            }
+          },
+          confirmButton = {
+            Button(
+              onClick = {
+                if (password == ADMIN_ACTION_PASSWORD) {
+                  showSettingsPasswordDialog = false
+                  currentScreen = KioskScreen.SETTINGS
+                } else {
+                  passwordError = true
+                }
+              },
+            ) {
+              Text("OK")
+            }
+          },
+          dismissButton = {
+            TextButton(onClick = { showSettingsPasswordDialog = false }) {
+              Text(if (activeLanguage == AppLanguage.KAZAKH) "Болдырмау" else "Отмена")
+            }
+          },
+        )
       }
 
       if (isVideoRecording) {
@@ -3771,14 +3869,16 @@ fun Step3Breathalyzer(
     if (breathalyzerMode == "dingo_usb") {
       // Small delay so UI renders first
       delay(600)
-      errorMessage = ""
-      DingoSerialManager.startMeasurement(
-        context = context,
-        fastTest = breathalyzerFastTest,
-        onStatusUpdate = { msg -> DingoSerialManager.statusText.value = msg },
-        onResult  = { mgPerL -> onConfirm(mgPerL) },
-        onError   = { err -> errorMessage = err }
-      )
+      if (!DingoSerialManager.isMeasuring.value) {
+        errorMessage = ""
+        DingoSerialManager.startMeasurement(
+          context = context,
+          fastTest = breathalyzerFastTest,
+          onStatusUpdate = { msg -> DingoSerialManager.statusText.value = msg },
+          onResult  = { mgPerL -> onConfirm(mgPerL) },
+          onError   = { err -> errorMessage = err }
+        )
+      }
     } else {
       // Simulation: auto-start blow sequence
       delay(400)
@@ -6423,8 +6523,8 @@ object OmronBleManager {
   }
 }
 
-// Единый пароль для административных действий в настройках: отключение режима киоска, смена API URL.
-private const val ADMIN_ACTION_PASSWORD = "Nex2026"
+// Единый PIN-код для входа и административных действий в настройках.
+private const val ADMIN_ACTION_PASSWORD = "7102"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -6738,8 +6838,8 @@ fun SettingsScreen(
             checked = kioskModeEnabled,
             onCheckedChange = {
               if (!it) {
-                pendingAdminActionLabelRu = "Введите пароль для отключения режима киоска:"
-                pendingAdminActionLabelKk = "Киоск режимін өшіру үшін парольді енгізіңіз:"
+                pendingAdminActionLabelRu = "Введите PIN-код для отключения режима киоска:"
+                pendingAdminActionLabelKk = "Киоск режимін өшіру үшін PIN-кодты енгізіңіз:"
                 pendingAdminAction = { onKioskModeToggle(false) }
               } else {
                 onKioskModeToggle(true)
@@ -6810,7 +6910,7 @@ fun SettingsScreen(
             OutlinedTextField(
               value = passInput,
               onValueChange = { passInput = it; passError = false },
-              label = { Text("Password") },
+              label = { Text("PIN-код") },
               isError = passError,
               visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
               singleLine = true,
@@ -6824,7 +6924,7 @@ fun SettingsScreen(
             )
             if (passError) {
               Text(
-                text = if (activeLanguage == AppLanguage.KAZAKH) "Қате пароль" else "Неверный пароль",
+                text = if (activeLanguage == AppLanguage.KAZAKH) "Қате PIN-код" else "Неверный PIN-код",
                 color = AppleRed,
                 fontSize = 12.sp
               )
@@ -7061,8 +7161,8 @@ fun SettingsScreen(
             }
             return
           }
-          pendingAdminActionLabelRu = "Введите пароль для смены адреса API:"
-          pendingAdminActionLabelKk = "API мекенжайын өзгерту үшін парольді енгізіңіз:"
+          pendingAdminActionLabelRu = "Введите PIN-код для смены адреса API:"
+          pendingAdminActionLabelKk = "API мекенжайын өзгерту үшін PIN-кодты енгізіңіз:"
           pendingAdminAction = {
             scope.launch {
               isValidatingUrl = true

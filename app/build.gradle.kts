@@ -14,8 +14,8 @@ android {
     applicationId = "com.aistudio.nexiumhealth.qptwyx"
     minSdk = 24
     targetSdk = 36
-    versionCode = 47
-    versionName = "1.47"
+    versionCode = 51
+    versionName = "1.51"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

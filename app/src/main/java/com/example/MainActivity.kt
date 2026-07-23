@@ -5184,60 +5184,6 @@ fun InfoTableRow(label: String, value: String, isMonospace: Boolean = false) {
 }
 
 // ==========================================
-// DETERMINISTIC AVATAR & INDUSTRY FIELD GENERATORS
-// ==========================================
-fun getDeterministicAvatar(name: String?): String {
-  val clean = name ?: ""
-  val hashCode = clean.hashCode()
-  val avatars = listOf(
-    "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=256",
-    "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=256",
-    "https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=256",
-    "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256",
-    "https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=256",
-    "https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=256"
-  )
-  val index = kotlin.math.abs(hashCode) % avatars.size
-  return avatars[index]
-}
-
-fun getDeterministicOrg(name: String?, lang: AppLanguage): String {
-  val clean = name ?: ""
-  val hashCode = clean.hashCode()
-  val orgs = listOf(
-    Trans("Altiora Транспорт Сервис", "Altiora Көлік Сервисі"),
-    Trans("Altiora Логистика", "Altiora Логистика және Терминалдары"),
-    Trans("Altiora Инжиниринг Продакшн", "Altiora Инжиниринг өндірісі")
-  )
-  val index = kotlin.math.abs(hashCode) % orgs.size
-  return orgs[index].get(lang)
-}
-
-fun getDeterministicBranch(name: String?, lang: AppLanguage): String {
-  val clean = name ?: ""
-  val hashCode = clean.hashCode()
-  val branches = listOf(
-    Trans("Алматинский Локомотивный филиал", "Алматы Локомотив филиалы"),
-    Trans("Астанинский Терминал", "Астана Бас Терминалы"),
-    Trans("Карагандинский транспортный хаб", "Қарағанды көлік хабы")
-  )
-  val index = kotlin.math.abs(hashCode) % branches.size
-  return branches[index].get(lang)
-}
-
-fun getDeterministicPos(name: String?, lang: AppLanguage): String {
-  val clean = name ?: ""
-  val hashCode = clean.hashCode()
-  val positions = listOf(
-    Trans("Старший машинист локомотива", "Аға локомотив машинисі"),
-    Trans("Старший диспетчер", "Аға диспетчер"),
-    Trans("Инспектор по безопасности труда", "Еңбек қауіпсіздігі жөніндегі инспектор")
-  )
-  val index = kotlin.math.abs(hashCode) % positions.size
-  return positions[index].get(lang)
-}
-
-// ==========================================
 // Searchable dropdown — переиспользуется для организации/филиала/должности
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class)

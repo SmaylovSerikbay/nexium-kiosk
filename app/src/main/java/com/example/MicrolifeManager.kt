@@ -53,12 +53,8 @@ object MicrolifeManager {
     private var onResultCb: ((Double) -> Unit)? = null
     private var onErrorCb:  ((String) -> Unit)? = null
 
-    private var lastWorkMode: Int = -1
-
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var timeoutJob: Job? = null
-    private var resultJob: Job? = null
-    private var latestResult: Pair<Long, Double>? = null
 
     // Auto-retry state
     private var retryCount    = 0
@@ -96,9 +92,6 @@ object MicrolifeManager {
 
         isMeasuring.value = true
         statusText.value  = "Поиск термометра…"
-        lastWorkMode = -1
-        resultJob?.cancel()
-        latestResult = null
 
         val activity = context as? Activity
         if (activity == null) {
@@ -184,9 +177,6 @@ object MicrolifeManager {
         // Отменяем все coroutine-задачи
         timeoutJob?.cancel()
         timeoutJob = null
-        resultJob?.cancel()
-        resultJob = null
-        latestResult = null
         // Сбрасываем флаги ДО отключения — чтобы autoRetry не запустился снова
         isMeasuring.value = false
         isConnected.value = false
@@ -210,47 +200,32 @@ object MicrolifeManager {
 
         override fun onResponseDeviceInfo(macAddress: String, workMode: Int, batteryVoltage: Float) {
             Log.d(TAG, "DeviceInfo: mac=$macAddress workMode=$workMode battery=${batteryVoltage}V")
-            lastWorkMode = workMode
             statusText.value = "Готов — нажмите START на термометре"
         }
 
-        override fun onResponseUploadMeasureData(thermoMeasureData: ThermoMeasureData) {
-            val data = thermoMeasureData
+        override fun onResponseUploadMeasureData(data: ThermoMeasureData) {
             val temp = data.measureTemperature.toDouble()
-            Log.d(TAG, ">>> MeasureData: temp=$temp flagErr=${data.flagErr} mode=${data.mode} workMode=$lastWorkMode")
+            Log.d(TAG, ">>> MeasureData: temp=$temp flagErr=${data.flagErr} mode=${data.mode}")
             if (data.flagErr != 0) {
                 Log.w(TAG, "flagErr=${data.flagErr} — ошибка измерения, пропускаем")
                 statusText.value = "Ошибка измерения (flagErr=${data.flagErr})"
                 return
             }
             if (temp in 20.0..50.0) {
-                val timestamp =
-                    (data.year ?: 0).toLong() * 100_000_000 +
-                    (data.month ?: 0) * 1_000_000 +
-                    (data.day ?: 0) * 10_000 +
-                    (data.hour ?: 0) * 100 +
-                    (data.minute ?: 0)
-                if (latestResult == null || timestamp >= latestResult!!.first) {
-                    latestResult = timestamp to temp
-                }
-                resultJob?.cancel()
-                resultJob = scope.launch {
-                    delay(1_500)
-                    latestResult?.second?.let(::deliverResult)
-                }
+                deliverResult(temp)
             } else {
                 Log.w(TAG, "Неправдоподобная температура=$temp — пропускаем")
                 statusText.value = "Неверное значение: ${temp}°C"
             }
         }
 
-        override fun onResponseUploadCalibrate(calibrateParameters: List<CalibrateParameter>) {
-            Log.d(TAG, "Calibrate params: ${calibrateParameters.size}")
+        override fun onResponseUploadCalibrate(params: List<CalibrateParameter>) {
+            Log.d(TAG, "Calibrate params: ${params.size}")
         }
 
-        override fun onWriteCommand(byteArray: ByteArray) {
+        override fun onWriteCommand(cmd: ByteArray) {
             // SDK требует записать эту команду обратно на устройство
-            Log.d(TAG, "onWriteCommand: ${byteArray.toHex()} (${byteArray.size} bytes)")
+            Log.d(TAG, "onWriteCommand: ${cmd.toHex()} (${cmd.size} bytes)")
             // Используем Dispatchers.IO чтобы не блокировать Main thread
             // и выполняем немедленно без delay
             scope.launch(Dispatchers.IO) {
@@ -260,8 +235,8 @@ object MicrolifeManager {
                         Log.e(TAG, "writeCommand: btManager is null!")
                         return@launch
                     }
-                    mgr.writeCommand(byteArray)
-                    Log.d(TAG, "writeCommand OK: ${byteArray.toHex()}")
+                    mgr.writeCommand(cmd)
+                    Log.d(TAG, "writeCommand OK: ${cmd.toHex()}")
                 } catch (e: Exception) {
                     Log.e(TAG, "writeCommand FAILED: ${e.message}", e)
                 }
@@ -293,8 +268,7 @@ object MicrolifeManager {
             Log.d(TAG, "  → Устройство принято, SDK подключается…")
         }
 
-        override fun onConnectionState(connectState: ConnectState) {
-            val state = connectState
+        override fun onConnectionState(state: ConnectState) {
             Log.d(TAG, "onConnectionState: $state")
             when (state) {
                 ConnectState.Connected   -> {
@@ -334,9 +308,9 @@ object MicrolifeManager {
             }
         }
 
-        override fun onConnectionState(connectState: ConnectState, state: Int) {
-            Log.d(TAG, "onConnectionState: $connectState code=$state")
-            onConnectionState(connectState)
+        override fun onConnectionState(state: ConnectState, errorCode: Int) {
+            Log.d(TAG, "onConnectionState: $state code=$errorCode")
+            onConnectionState(state)
         }
 
         /**
@@ -365,10 +339,10 @@ object MicrolifeManager {
             }
         }
 
-        override fun onResponseSWRevision(swRevision: String) { Log.d(TAG, "SW=$swRevision") }
-        override fun onResponseFWRevision(fwRevision: String) { Log.d(TAG, "FW=$fwRevision") }
-        override fun onResponseHWRevision(hwRevision: String) { Log.d(TAG, "HW=$hwRevision") }
-        override fun onBtStateChanged(isEnable: Boolean) { Log.d(TAG, "BT enabled=$isEnable") }
+        override fun onResponseSWRevision(sw: String) { Log.d(TAG, "SW=$sw") }
+        override fun onResponseFWRevision(fw: String) { Log.d(TAG, "FW=$fw") }
+        override fun onResponseHWRevision(hw: String) { Log.d(TAG, "HW=$hw") }
+        override fun onBtStateChanged(enabled: Boolean) { Log.d(TAG, "BT enabled=$enabled") }
         override fun onResponseFailedMessage(msg: String) {
             Log.w(TAG, "FailedMessage: $msg")
             statusText.value = "⚠ $msg"
@@ -381,19 +355,10 @@ object MicrolifeManager {
         timeoutJob?.cancel()
         isMeasuring.value = false
         isConnected.value = false
-        // Термометр на своём экране ОБРЕЗАЕТ второй знак после запятой, а не округляет
-        // (36.26 → "36.2", не "36.3"). String.format("%.1f", ...) округляет — из-за этого
-        // наше значение расходилось с прибором на 0.1°C. Обрезаем так же, как прибор.
-        val cents = Math.round(temp * 100)
-        val temp1dp = (cents / 10) / 10.0
-        val formatted = String.format("%.1f", temp1dp)
+        val formatted = String.format("%.1f", temp)
         statusText.value  = "Результат: $formatted °C"
-        Log.d(TAG, ">>> RESULT: $temp°C (обрезано до $formatted°C)")
-        // onResponseUploadMeasureData приходит из BLE-потока SDK, а не с Main —
-        // без этого post() обновление Compose-state из onResultCb молча не применяется.
-        android.os.Handler(android.os.Looper.getMainLooper()).post {
-            onResultCb?.invoke(temp1dp)
-        }
+        Log.d(TAG, ">>> RESULT: $temp°C")
+        onResultCb?.invoke(temp)
         scope.launch {
             delay(500)
             try { btManager?.disconnectGatt() } catch (_: Exception) {}

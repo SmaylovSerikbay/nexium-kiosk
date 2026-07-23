@@ -4008,11 +4008,15 @@ fun Step4Temperature(
   var thermometerMode by remember { mutableStateOf(prefs.getString("thermometer_mode", "simulation") ?: "simulation") }
   var thermometerMac  by remember { mutableStateOf(prefs.getString("thermometer_mac",  "") ?: "") }
   var thermometerName by remember { mutableStateOf(prefs.getString("thermometer_name", "") ?: "") }
+  var hasStarted by remember { mutableStateOf(false) }
 
   DisposableEffect(prefs) {
     val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { sp, key ->
       when (key) {
-        "thermometer_mode" -> thermometerMode = sp.getString("thermometer_mode", "simulation") ?: "simulation"
+        "thermometer_mode" -> {
+          thermometerMode = sp.getString("thermometer_mode", "simulation") ?: "simulation"
+          hasStarted = false
+        }
         "thermometer_mac"  -> thermometerMac  = sp.getString("thermometer_mac",  "") ?: ""
         "thermometer_name" -> thermometerName = sp.getString("thermometer_name", "") ?: ""
       }
@@ -4030,26 +4034,36 @@ fun Step4Temperature(
   var currentTemp  by remember { mutableStateOf(35.0) }
   var errorMessage by remember { mutableStateOf("") }
 
-  val microStatus    = remember { MicrolifeManager.statusText }
-  val microConnected = remember { MicrolifeManager.isConnected }
   val microMeasuring = remember { MicrolifeManager.isMeasuring }
 
-  // Pulse ring animation — always running
   val infiniteTransition = rememberInfiniteTransition(label = "tempPulse")
   val pulseScale by infiniteTransition.animateFloat(
     initialValue = 0.3f, targetValue = 1f,
     animationSpec = infiniteRepeatable(tween(1400, easing = FastOutSlowInEasing), RepeatMode.Restart),
     label = "pulseScale"
   )
-  val heatShimmer by infiniteTransition.animateFloat(
-    initialValue = 0f, targetValue = 1f,
-    animationSpec = infiniteRepeatable(tween(900, easing = LinearEasing), RepeatMode.Reverse),
-    label = "heatShimmer"
-  )
 
-  // Simulation keeps its existing automatic flow; the real thermometer starts by button.
-  LaunchedEffect(isMicrolifeActive) {
-    if (!isMicrolifeActive) {
+  LaunchedEffect(Unit) {
+    if (hasStarted) return@LaunchedEffect
+    hasStarted = true
+    errorMessage = ""
+
+    if (isMicrolifeActive) {
+      delay(400)
+      if (thermometerMac.isBlank()) {
+        errorMessage = "not_configured"
+        return@LaunchedEffect
+      }
+      MicrolifeManager.connect(
+        context = context,
+        macAddress = thermometerMac,
+        onResult = { temp ->
+          currentTemp = temp
+          onConfirm(temp)
+        },
+        onError = { errorMessage = "connection" }
+      )
+    } else {
       delay(300)
       scansCount = 0f
       while (scansCount < 1f) {
@@ -4059,20 +4073,6 @@ fun Step4Temperature(
       }
       onConfirm(36.6)
     }
-  }
-
-  fun readTemperature() {
-    errorMessage = ""
-    if (thermometerMac.isBlank()) {
-      errorMessage = "MAC-адрес не задан. Откройте Настройки → отсканируйте Microlife NC-150 BT"
-      return
-    }
-    MicrolifeManager.connect(
-      context = context,
-      macAddress = thermometerMac,
-      onResult = { temp -> currentTemp = temp; onConfirm(temp) },
-      onError = { err -> errorMessage = err }
-    )
   }
 
   val isDark = LocalDarkTheme.current
@@ -4096,7 +4096,6 @@ fun Step4Temperature(
 
       Spacer(modifier = Modifier.height(14.dp))
 
-      // Pulsing heat rings visualization
       Box(modifier = Modifier.size(140.dp), contentAlignment = Alignment.Center) {
         Canvas(modifier = Modifier.fillMaxSize()) {
           val cx = size.width / 2f
@@ -4107,35 +4106,17 @@ fun Step4Temperature(
             color = if (isDark) Color(0xFF0A0A0F) else Color(0xFFF0F0F5),
             radius = maxR * 0.72f, center = Offset(cx, cy)
           )
-          drawCircle(color = tempColor.copy(alpha = 0.08f), radius = maxR * 0.72f, center = Offset(cx, cy))
-
-          for (i in 0..2) {
-            val ringPhase = (pulseScale + i * 0.33f) % 1f
-            val ringR = maxR * 0.4f + maxR * 0.55f * ringPhase
-            drawCircle(
-              color = tempColor.copy(alpha = (1f - ringPhase) * 0.35f),
-              radius = ringR, center = Offset(cx, cy), style = Stroke(width = 2.5f)
-            )
-          }
-
-          val glowAlpha = 0.15f + heatShimmer * 0.12f
           drawCircle(
-            brush = Brush.radialGradient(
-              colors = listOf(tempColor.copy(alpha = glowAlpha * 2f), tempColor.copy(alpha = glowAlpha)),
-              center = Offset(cx, cy), radius = maxR * 0.5f
-            ),
-            radius = maxR * 0.5f, center = Offset(cx, cy)
-          )
-          drawCircle(
-            color = tempColor.copy(alpha = 0.5f + heatShimmer * 0.3f),
-            radius = maxR * 0.72f, center = Offset(cx, cy), style = Stroke(width = 2f)
+            color = tempColor.copy(alpha = (1f - pulseScale) * 0.3f),
+            radius = maxR * (0.72f + pulseScale * 0.2f),
+            center = Offset(cx, cy),
+            style = Stroke(width = 2f)
           )
         }
 
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
           Text(
-            text = if (isBleActive && !microMeasuring.value && currentTemp == 35.0) "—"
-                   else String.format("%.1f", currentTemp),
+            text = if (isBleActive) "—" else String.format("%.1f", currentTemp),
             color = tempColor,
             fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace
           )
@@ -4146,33 +4127,19 @@ fun Step4Temperature(
       Spacer(modifier = Modifier.height(16.dp))
 
       if (isBleActive) {
-        // BLE mode status
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-          Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(
-            if (microConnected.value) AppleGreen else if (microMeasuring.value) AppleAmber else AppleMutedGrey
-          ))
-          Text(
-            text = "MICROLIFE NC-150 BT",
-            color = if (microConnected.value) AppleGreen else AppleLightGrey,
-            fontSize = 14.sp, fontWeight = FontWeight.Bold
-          )
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-
-        // Status text or error
         val displayText = when {
-          errorMessage.isNotEmpty() -> "⚠ $errorMessage"
-          microConnected.value && !microMeasuring.value -> "✓ Подключено. Нажмите START на термометре NC-150"
-          microMeasuring.value -> "Измерение температуры..."
-          else -> microStatus.value
+          errorMessage == "not_configured" ->
+            if (lang == AppLanguage.KAZAKH) "Термометр бапталмаған" else "Термометр не настроен"
+          errorMessage.isNotEmpty() ->
+            if (lang == AppLanguage.KAZAKH) "Термометрді қосып, қайталап көріңіз" else "Включите термометр и повторите"
+          else ->
+            if (lang == AppLanguage.KAZAKH) "Термометрді қосып, START түймесін басыңыз" else "Включите термометр и нажмите START"
         }
         Text(
           text = displayText,
           color = if (errorMessage.isNotEmpty()) AppleRed else AppleMutedGrey,
-          fontSize = 12.sp, textAlign = TextAlign.Center,
+          fontSize = 16.sp, textAlign = TextAlign.Center,
+          fontWeight = FontWeight.Medium,
           modifier = Modifier.padding(horizontal = 14.dp)
         )
       } else {
@@ -4197,34 +4164,11 @@ fun Step4Temperature(
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-      if (isBleActive && !microMeasuring.value) {
-        Button(
-          onClick = { readTemperature() },
-          colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
-          shape = RoundedCornerShape(14.dp),
-          modifier = Modifier.fillMaxWidth().height(56.dp)
-        ) {
-          Icon(
-            imageVector = LegacyBluetoothSearchingIcon,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp)
-          )
-          Spacer(modifier = Modifier.width(8.dp))
-          Text(
-            text = if (lang == AppLanguage.KAZAKH) "Температура деректерін алу" else "Получить данные температуры",
-            fontWeight = FontWeight.Bold,
-            fontSize = 14.sp
-          )
-        }
-      } else if (isBleActive && microMeasuring.value) {
+      if (isBleActive && microMeasuring.value) {
         LinearProgressIndicator(
           color = tempColor,
           trackColor = if (isDark) AppleCharcoal else Color(0xFFE5E5EA),
           modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp))
-        )
-        Text(
-          text = microStatus.value,
-          color = tempColor, fontSize = 12.sp, fontWeight = FontWeight.Medium
         )
       } else if (!isBleActive) {
         // Simulation progress

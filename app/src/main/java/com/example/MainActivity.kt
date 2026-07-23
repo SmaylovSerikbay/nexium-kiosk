@@ -3142,7 +3142,7 @@ fun AwaitingNurseDecisionScreen(onRestart: () -> Unit) {
       Spacer(modifier = Modifier.height(24.dp))
 
       Text(
-        text = if (lang == AppLanguage.KAZAKH) "МЕДБИКЕ ӘЛІ ШЕШІМ ҚАБЫЛДАҒАН ЖОҚ" else "МЕДСЕСТРА ЕЩЁ НЕ ПРИНЯЛА РЕШЕНИЕ",
+        text = if (lang == AppLanguage.KAZAKH) "МЕДБИКЕ ӘЛІ ШЕШІМ ҚАБЫЛДАҒАН ЖОҚ" else "МЕДРАБОТНИК ЕЩЁ НЕ ПРИНЯЛ РЕШЕНИЕ",
         color = AppleAmber,
         fontSize = 20.sp,
         fontWeight = FontWeight.Bold,
@@ -3156,7 +3156,7 @@ fun AwaitingNurseDecisionScreen(onRestart: () -> Unit) {
         text = if (lang == AppLanguage.KAZAKH)
           "Нәтижені алу үшін медбикеге хабарласыңыз немесе күте тұрыңыз."
         else
-          "Обратитесь к медсестре для получения результата или подождите ещё немного.",
+          "Обратитесь к медработнику для получения результата или подождите ещё немного.",
         fontSize = 13.sp,
         textAlign = TextAlign.Center,
         modifier = Modifier.padding(horizontal = 24.dp)

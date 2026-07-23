@@ -50,6 +50,15 @@ object KioskManager {
         return isOwner
     }
 
+    fun wifiSettingsIntent(): Intent =
+        Intent(
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                android.provider.Settings.Panel.ACTION_WIFI
+            } else {
+                android.provider.Settings.ACTION_WIFI_SETTINGS
+            }
+        )
+
     // Разрешает приложению работать в Lock Task Mode и назначает MainActivity
     // постоянным HOME-приложением. BOOT_COMPLETED receiver остаётся страховкой
     // для Samsung-прошивок, где системный Launcher может остаться обычным HOME.

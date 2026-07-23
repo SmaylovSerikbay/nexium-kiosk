@@ -6811,6 +6811,38 @@ fun SettingsScreen(
             )
           )
         }
+
+        HorizontalDivider(color = AppleBorderColor)
+
+        Row(
+          modifier = Modifier.fillMaxWidth(),
+          horizontalArrangement = Arrangement.SpaceBetween,
+          verticalAlignment = Alignment.CenterVertically
+        ) {
+          Column(modifier = Modifier.weight(1f)) {
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Wi‑Fi желісіне қосылу" else "Подключение к Wi‑Fi",
+              color = AppleLightGrey,
+              fontWeight = FontWeight.Bold,
+              fontSize = 16.sp
+            )
+            Text(
+              text = if (activeLanguage == AppLanguage.KAZAKH) "Киоск режимінен шықпай желіні таңдаңыз" else "Выберите сеть, не выходя из режима киоска",
+              color = AppleMutedGrey,
+              fontSize = 12.sp
+            )
+          }
+
+          Button(
+            onClick = { context.startActivity(KioskManager.wifiSettingsIntent()) },
+            colors = ButtonDefaults.buttonColors(containerColor = AppleBlue),
+            modifier = Modifier.testTag("open_wifi_settings_button")
+          ) {
+            Icon(Icons.Default.Wifi, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(if (activeLanguage == AppLanguage.KAZAKH) "Қосылу" else "Подключиться")
+          }
+        }
       }
     }
 
